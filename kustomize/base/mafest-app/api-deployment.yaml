@@ -75,9 +75,9 @@ spec:
                       - k8s-worker2
       containers:
         - name: api
-          # 승인된 앱 릴리스(mafest 28a47258…)의 digest. 최초 적재용 digest와 다르다. 릴리스마다 사람이 승인한 값으로
+          # 승인된 앱 릴리스(mafest 8a49e6c0…)의 digest. 최초 적재용 digest와 다르다. 릴리스마다 사람이 승인한 값으로
           # 바꾸고 validator의 승인 상수도 함께 갱신한다.
-          image: ghcr.io/persona-runtime/mafest-app@sha256:2e3f2a669f17543c0468c2175069a530d14e1af0ee700acb1a224613ca19ef62
+          image: ghcr.io/persona-runtime/mafest-app@sha256:cc6a69138040252fca88e6f6cbd04ad67bbd92c1fda1e1098c2ac9af2819c955
           imagePullPolicy: IfNotPresent
           # 이미지 CMD에 --timeout-graceful-shutdown이 없어 같은 실행 형태에 그 옵션만 더해 명시한다.
           # command는 쓰지 않는다(이미지에 ENTRYPOINT가 없어 args가 CMD를 대체한다).
