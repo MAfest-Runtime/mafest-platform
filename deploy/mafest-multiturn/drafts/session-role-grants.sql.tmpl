@@ -1,0 +1,61 @@
+-- [초안·비활성] 세션 전용 role 권한 템플릿. 활성 SQL이 아니다.
+--
+-- 왜 템플릿인가: 테이블·시퀀스·role 이름은 앱 지시서가 정한다. 이름이 정해지기 전에 임의의 이름으로
+-- 권한 SQL을 만들면 잘못된 객체에 권한이 붙을 수 있다. 값은 psql 변수로 받고, 비어 있으면 실패한다.
+--
+-- 이 파일이 하지 않는 것: role 생성·비밀번호(CNPG managed role/Secret이 한다), DDL, 상품·온톨로지·AGE 데이터 권한,
+-- mafest_runtime 권한 변경(검색 runtime은 읽기 전용을 유지한다).
+--
+-- 사용 예(후속 승인 뒤, superuser 또는 객체 owner로):
+--   psql -v ON_ERROR_STOP=1 \
+--        -v session_role=<role> -v session_schema=<schema> \
+--        -v session_tables=<t1,t2> -v session_sequences=<s1,s2 또는 빈 값> -v allow_delete=<true|false> \
+--        -f session-role-grants.sql.tmpl
+--
+-- 멱등성: GRANT는 이미 부여된 권한에 다시 실행해도 같은 결과다. 다만 이것은 SQL 문법에 대한 설명이며 실제 DB에서
+-- 두 번 실행해 확인한 결과가 아니다.
+\set ON_ERROR_STOP on
+
+-- 변수를 DO 블록 안에서 읽기 위해 세션 설정으로 넘긴다(DO 본문에는 psql 변수가 치환되지 않는다).
+SELECT set_config('mafest_grants.role',      :'session_role',      false);
+SELECT set_config('mafest_grants.schema',    :'session_schema',    false);
+SELECT set_config('mafest_grants.tables',    :'session_tables',    false);
+SELECT set_config('mafest_grants.sequences', :'session_sequences', false);
+SELECT set_config('mafest_grants.allow_delete', :'allow_delete',   false);
+
+DO $grants$
+DECLARE
+    target_role   text := current_setting('mafest_grants.role');
+    target_schema text := current_setting('mafest_grants.schema');
+    item          text;
+    privileges    text;
+BEGIN
+    IF target_role = '' OR target_schema = '' OR current_setting('mafest_grants.tables') = '' THEN
+        RAISE EXCEPTION '필수 변수가 비어 있다 — 앱 지시서가 확정한 값을 넣는다';
+    END IF;
+    IF target_role IN ('mafest_runtime', 'mafest_owner', 'postgres') THEN
+        RAISE EXCEPTION '% 에는 이 템플릿을 쓰지 않는다 — 세션 전용 role만 대상이다', target_role;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN
+        RAISE EXCEPTION '% role이 없다 — CNPG managed role 상태를 먼저 본다', target_role;
+    END IF;
+
+    privileges := 'SELECT, INSERT, UPDATE';
+    IF current_setting('mafest_grants.allow_delete') = 'true' THEN
+        privileges := privileges || ', DELETE';
+    END IF;
+
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', target_schema, target_role);
+
+    -- 명시한 테이블에만 준다. 스키마 전체나 ALL TABLES IN SCHEMA 형태는 쓰지 않는다.
+    FOREACH item IN ARRAY string_to_array(current_setting('mafest_grants.tables'), ',') LOOP
+        EXECUTE format('GRANT %s ON TABLE %I.%I TO %I', privileges, target_schema, trim(item), target_role);
+    END LOOP;
+
+    IF current_setting('mafest_grants.sequences') <> '' THEN
+        FOREACH item IN ARRAY string_to_array(current_setting('mafest_grants.sequences'), ',') LOOP
+            EXECUTE format('GRANT USAGE ON SEQUENCE %I.%I TO %I', target_schema, trim(item), target_role);
+        END LOOP;
+    END IF;
+END
+$grants$;

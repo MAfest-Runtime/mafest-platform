@@ -1,0 +1,75 @@
+# [초안·비활성] 멀티턴 세션 테이블 마이그레이션 Job 템플릿.
+#
+# 이 파일은 kustomization에 연결하지 않았고 확장자가 .draft라 어떤 렌더에도 들어가지 않는다.
+# 아래 __ 로 시작하는 값은 앱 지시서가 확정해야 채울 수 있다. 값이 남아 있으면
+# scripts/check-mafest-multiturn-prep.sh 가 "준비 미완료"로 보고한다. 존재하지 않는 이미지·명령을
+# 실행 가능한 예로 쓰지 않기 위해 일부러 자리표시 문자열을 둔다.
+#
+# 왜 mafest-data에 두는가: owner Secret(mafest-db-owner)이 이 namespace에 있어 다른 namespace로 복사하지 않아도 된다.
+# 전제(미확인): 비공개 이미지 pull Secret(mafest-ghcr)이 mafest-data에도 있어야 한다. 없으면 사람이 만들어야 하며
+# 이 저장소는 값을 다루지 않는다.
+#
+# 실행 방식: Argo hook이 아니다. 선택 Sync는 hook을 실행하지 않으므로, 사람이 이 Job을 따로 만들고
+# 완료·마이그레이션 버전을 확인한 뒤에만 API 선택 Sync를 요청한다(deploy/mafest-multiturn/README.md §배포 순서).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mafest-session-migrate
+  namespace: mafest-data
+  labels:
+    app.kubernetes.io/name: mafest-session-migrate
+    app.kubernetes.io/component: migration
+    app.kubernetes.io/part-of: persona-platform
+spec:
+  # 실패해도 다시 돌리지 않는다. 부분 적용된 DDL을 자동 재시도하면 상태를 알기 어렵다.
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  # 실패한 Pod의 로그를 사람이 볼 수 있도록 자동 삭제 시한을 두지 않는다(성공 Job은 사람이 지운다).
+  template:
+    metadata:
+      labels:
+        # 아래 NetworkPolicy 초안이 이 라벨로만 DB 5432를 연다. mafest-loader·mafest-api 라벨을 재사용하지 않는다.
+        app.kubernetes.io/name: mafest-session-migrate
+        app.kubernetes.io/component: migration
+        app.kubernetes.io/part-of: persona-platform
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: mafest-ghcr
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          # 앱이 발행하는 마이그레이션 포함 이미지의 digest. 태그로 고정하지 않는다.
+          image: ghcr.io/persona-runtime/mafest-app@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          command:
+            - __APP_MIGRATION_CLI__
+          env:
+            # owner DSN. API 컨테이너에는 이 Secret을 연결하지 않는다.
+            - name: PGURL
+              valueFrom:
+                secretKeyRef:
+                  name: mafest-db-owner
+                  key: __OWNER_DSN_KEY__
+            # 앱이 "이 버전까지 적용됐다"를 확인할 때 쓰는 기대 버전. 값은 앱 지시서가 정한다.
+            - name: MAFEST_EXPECTED_MIGRATION_VERSION
+              value: __APP_MIGRATION_VERSION__
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
