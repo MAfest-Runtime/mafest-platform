@@ -1,0 +1,69 @@
+{
+  "_설명": "경로별 LLM 호출 상한은 관측값이 아니라 '코드로 증명한 것'만 인정한다. 증명이 비었거나 llm_call_upper_bound 가 null 이면 그 경로는 도구가 거부한다. 실행 중 api 이미지 digest 가 proof.api_image_digest 와 다르면 증명은 무효이고 다시 준비 안 됨이 된다. 2026-10-14 관측(286건 평균 7ms, 같은 시간대 vLLM에 api발 요청 없음)은 근거로 쓰지 않는다.",
+  "routes": {
+    "/v1/products/{domain}/{product_id}": {
+      "method": "GET",
+      "request_kind": "db_read_only",
+      "llm_call_upper_bound": 0,
+      "proof": {
+        "verdict": "LLM 호출 지점에 도달할 수 없음(상한 0)",
+        "reviewed_on": "2026-10-14",
+        "api_image_digest": "sha256:5f8a8c6f3f46e76f9bc605b62db724c5b6cc0781a7f080cc44daa35513702b8a",
+        "reviewed_commit": "c345fbf27f6108fa83e3230337df3dca05d0df28",
+        "provenance_verified": false,
+        "provenance_note": "digest ↔ 커밋 대응은 배포 선언 주석('승인된 앱 릴리스(mafest c345fbf2…)', persona-platform chore/mafest-release-image-2 의 api-deployment.yaml)과 사용자 제공 D06 사전 조회(실행 이미지 digest)를 이은 것이다. 이미지 라벨·빌드 로그로 출처를 검증하지 못했다.",
+        "entrypoint": "src/mafest/serving/api/products.py:61 product_detail → :86 _handle",
+        "call_chain": [
+          "products.py:89 detail.internal_key(domain) — serving/search/detail.py, 도메인 키 표 조회",
+          "products.py:101 registry.get().pg — agent/runner_registry.py RunnerRegistry.get, RUNNER_KINDS=(pg, graph, vector, entity, risk) 러너 생성/대기. LLM 러너 없음",
+          "products.py:104 detail.select_columns(domain) — 공개 열 허용 목록",
+          "products.py:105-106 run_with_reconnect → pg.get_by_id — agent/pg_runner.py:400, 'SELECT … WHERE id = %s LIMIT 1' 한 건 조회(DB만)",
+          "products.py:112-113 detail.build_detail + products.py:52 _fallback_as_of → llm/pipeline.py:177 Pipeline.base_dates → bootstrap.py:67 db_base_date_reader — DB 조회 또는 설정값",
+          "detail.py:19-20 의 mafest.llm import 는 contract(데이터 타입)와 view_columns(열 이름 계산)뿐이며 네트워크 호출이 없다",
+          "LLM 네트워크 호출은 llm/client.py 의 httpx 호출(feature_caller, complete_text)에만 있고, 위 어느 함수도 이를 호출하지 않는다"
+        ],
+        "branches": [
+          "도메인이 공개 키가 아님 → 404 unknown_domain(products.py:90-91)",
+          "product_id 길이가 1~64가 아님 → 404 product_not_found",
+          "registry 또는 pg 러너 없음 → RunnerNotConfigured → 503 unavailable",
+          "row 가 없음 → 404 product_not_found(products.py:108-111)",
+          "build_detail 이 None → 404 product_not_found",
+          "성공 → 200 + Cache-Control(products.py:119)",
+          "저장소 예외 → 503, 그 밖 예외 → 500. 모든 분기에 LLM 호출 경로가 없다"
+        ],
+        "settings_dependency": "없음 — products.py·detail.py 는 MAFEST_LLM_SUMMARY/SUGGEST/RETRIES·LLM_USE_MOCK·llm_summary·llm_suggest·llm_retries 를 읽지 않는다. 그래서 이 상한은 생성 설정과 무관하다.",
+        "dynamic_evidence": "scripts/fault/proof/ 의 관찰 플러그인으로 위 커밋의 tests/unit/serving/test_v1_detail.py 에서 검색을 수행하는 1건을 제외한 40건(6개 상품군 성공, 404, 503, 500 분기 포함)을 실행했을 때 LLM 싱크 함수(llm/client.py, llm/expanded.py, generate, _answer_from_evidence_outcome, complete_text, feature_caller)가 0회 실행됐다. 실행된 mafest/llm 함수는 formatting·view_columns·Pipeline.base_dates 뿐이다. 같은 플러그인이 /v1/search 테스트(test_log_line_has_only_fixed_fields_and_no_question)에서는 expand_answer·complete_text 실행을 잡아 검출 능력을 확인했다(양성 대조).",
+        "limits": "이 증명은 위 커밋 소스에 대한 것이다. digest 가 바뀌면 소스를 다시 검토해야 하며 그때까지 도구는 시작하지 않는다."
+      }
+    },
+    "/v1/search": {
+      "method": "POST",
+      "request_kind": "end_to_end_search",
+      "llm_call_upper_bound": null,
+      "proof": {
+        "verdict": "LLM 호출 지점에 도달할 수 있음 — 상한을 정할 수 없어 E0 대상에서 제외",
+        "reviewed_on": "2026-10-14",
+        "api_image_digest": "sha256:5f8a8c6f3f46e76f9bc605b62db724c5b6cc0781a7f080cc44daa35513702b8a",
+        "reviewed_commit": "c345fbf27f6108fa83e3230337df3dca05d0df28",
+        "provenance_verified": false,
+        "provenance_note": "digest ↔ 커밋 대응은 배포 선언 주석('승인된 앱 릴리스(mafest c345fbf2…)', persona-platform chore/mafest-release-image-2 의 api-deployment.yaml)과 사용자 제공 D06 사전 조회(실행 이미지 digest)를 이은 것이다. 이미지 라벨·빌드 로그로 출처를 검증하지 못했다.",
+        "entrypoint": "src/mafest/serving/api/v1.py:131 search → :150 run_search(runner.py:129)",
+        "call_chain": [
+          "runner.py:129 run_search 는 비스트림과 스트림이 공유하는 본체이며 prepare → interpret → execute → answer → suggest → finalize 를 부른다(runner.py:137)",
+          "runner.py:100 stages.answer(stages.py:598) → outcome 이 answered/caveat 이면 :658 _answer_with_results → :662 expand_answer",
+          "llm/expanded.py:319-321 wants_summary = (summary_mode=='llm_summary' and facts and settings.llm_summary), wants_suggest = (outcome in answered/caveat and settings.llm_suggest). config.py:58-59 기본값이 둘 다 True 이고 api 매니페스트는 이 값을 지정하지 않는다",
+          "stages.py:702 / :636 _short_answer → llm/pipeline.py:504 answer_from_evidence_outcome → :539 [1] 사전 게이트(LLM 미호출) 아니면 :562-564 [2] LLM 1회 generate",
+          "재시도: config.py:70 llm_retries 기본 1 → 호출 한 건당 최대 2회 시도(llm/client.py:326)",
+          "tests/unit/serving/test_v1_search.py:348 는 /v1/search 한 건의 로그에 llm_calls=2 를 단정한다(요약+제안, 가짜 caller)"
+        ],
+        "branches": [
+          "refused / unread 등 게이트 경로에서는 LLM 을 부르지 않지만, 어떤 질문이 어느 outcome 이 되는지는 라우터·데이터에 달려 있어 경로 수준에서 0을 증명할 수 없다",
+          "answered/caveat 이면 생성 설정이 켜진 한 요약·제안 호출이 시작된다"
+        ],
+        "settings_dependency": "MAFEST_LLM_SUMMARY, MAFEST_LLM_SUGGEST, MAFEST_LLM_RETRIES, LLM_USE_MOCK",
+        "dynamic_evidence": "test_log_line_has_only_fixed_fields_and_no_question 통과(위 커밋 소스, 데이터 포함 추출본). 관찰 플러그인이 expand_answer·complete_text 실행을 기록했다.",
+        "limits": "가설 'summary·suggest 는 /v1/search/stream, /answer 등 다른 경로에서만 실행된다' 는 코드로 반박됐다. 2026-10-14 관측(286건 평균 7ms)은 호출이 없는 outcome(게이트 경로)의 질문이었을 가능성과 일치하며 근거로 쓰지 않는다."
+      }
+    }
+  }
+}
