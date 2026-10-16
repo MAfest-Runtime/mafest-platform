@@ -160,8 +160,8 @@ unless prometheus["url"] == expected_url
   raise "[기준선] Prometheus datasource URL이 기준선과 다르다: #{prometheus['url']}"
 end
 
-# 7. GPU 노드도 node-exporter 기준선에 포함한다. DCGM의 GPU 지표만 보면 host CPU·메모리·
-#    디스크 병목을 구분할 수 없기 때문이다. 반대로 affinity를 풀어 모든 노드에 자동 배치하지
+# 7. 컨트롤 플레인과 GPU 노드도 node-exporter 기준선에 포함한다. DCGM의 GPU 지표만 보면
+#    host CPU·메모리·디스크 병목을 구분할 수 없기 때문이다. 반대로 affinity를 풀어 모든 노드에 자동 배치하지
 #    않는다 — 이 클러스터는 명시한 네 노드만 관측 대상으로 둔다.
 node_exporter = resource(resources, "DaemonSet", "#{release_name}-prometheus-node-exporter")
 node_exporter_pod = node_exporter.dig("spec", "template", "spec") ||
@@ -172,10 +172,20 @@ hostnames = node_exporter_pod.dig("affinity", "nodeAffinity",
 unless hostnames == ["k8s-cp", "k8s-worker1", "k8s-worker2", "persona-gpu-01"]
   raise "[기준선] node-exporter 대상 hostname이 다르다: #{hostnames.inspect}"
 end
-expected_gpu_toleration = [{ "key" => "personaruntime.xyz/dedicated", "operator" => "Equal",
-                             "value" => "gpu-serving", "effect" => "NoSchedule" }]
-unless node_exporter_pod["tolerations"] == expected_gpu_toleration
-  raise "[안전] node-exporter GPU taint 허용 범위가 다르다"
+expected_gpu_toleration = { "key" => "personaruntime.xyz/dedicated", "operator" => "Equal",
+                            "value" => "gpu-serving", "effect" => "NoSchedule" }
+expected_control_plane_toleration = { "key" => "node-role.kubernetes.io/control-plane",
+                                      "operator" => "Exists", "effect" => "NoSchedule" }
+# 대상 hostname에 k8s-cp가 있으면 control-plane taint를 허용해야 한다. 대상으로 지정하고도
+# taint 때문에 Pod가 뜨지 않는 결함(Prometheus에 k8s-cp 대상이 없음)을 다시 만들지 않는다.
+if hostnames.include?("k8s-cp") &&
+   !(node_exporter_pod["tolerations"] || []).include?(expected_control_plane_toleration)
+  raise "[기준선] node-exporter 대상에 k8s-cp가 있는데 control-plane taint를 허용하지 않는다"
+end
+# 허용 범위는 이 두 taint뿐이다. 다른 taint까지 넓히면 안 된다.
+unless node_exporter_pod["tolerations"] == [expected_gpu_toleration,
+                                            expected_control_plane_toleration]
+  raise "[안전] node-exporter taint 허용 범위(GPU, control-plane)가 다르다"
 end
 
 puts "monitoring-stack 렌더와 Grafana·datasource 기준선 검사 통과"
