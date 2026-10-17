@@ -57,6 +57,43 @@ cases = [
      env = env_list(File.join(r, API)).map { |e| e["name"] == "PGURL" ? { "name" => "PGURL", "valueFrom" => { "secretKeyRef" => { "name" => "mafest-migrator", "key" => "PGURL" } } } : e }
      mutate_yaml(File.join(r, API), C0 + ["env"], env)
    }, "mafest-api-db의 PGURL"],
+  ["세션 DSN 누락", ->(r) {
+     env = env_list(File.join(r, API)).reject { |e| e["name"] == "PGURL_SESSION" }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+   }, "PGURL_SESSION이 없다"],
+  ["세션 서버 키를 다른 Secret으로 분리", ->(r) {
+     env = env_list(File.join(r, API)).map { |e| e["name"] == "MAFEST_SESSION_KEY" ? { "name" => "MAFEST_SESSION_KEY", "valueFrom" => { "secretKeyRef" => { "name" => "mafest-api-key-other", "key" => "MAFEST_SESSION_KEY" } } } : e }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+   }, "mafest-api-session의 MAFEST_SESSION_KEY"],
+  ["세션 DSN에 DDL Secret 연결", ->(r) {
+     env = env_list(File.join(r, API)).map { |e| e["name"] == "PGURL_SESSION" ? { "name" => "PGURL_SESSION", "valueFrom" => { "secretKeyRef" => { "name" => "mafest-db-owner", "key" => "PGURL_SESSION" } } } : e }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+   }, "mafest-api-session의 PGURL_SESSION"],
+  ["세션 DSN에 마이그레이션 전용 Secret 연결", ->(r) {
+     env = env_list(File.join(r, API)).map { |e| e["name"] == "PGURL_SESSION" ? { "name" => "PGURL_SESSION", "valueFrom" => { "secretKeyRef" => { "name" => "mafest-session-migrate-db", "key" => "PGURL" } } } : e }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+   }, "mafest-api-session의 PGURL_SESSION"],
+  ["마이그레이션 DSN 이름을 API에 추가", ->(r) {
+     mutate_yaml(File.join(r, API), C0 + ["env"], env_list(File.join(r, API)) + [{ "name" => "PGURL_SESSION_MIGRATE", "value" => "x" }])
+   }, "Settings가 읽지 않는 환경변수"],
+  ["확인 질문 기능 끔", ->(r) {
+     env = env_list(File.join(r, API)).map { |e| e["name"] == "MAFEST_LLM_INTENT" ? e.merge("value" => "0") : e }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+   }, "MAFEST_LLM_INTENT는"],
+  ["요약 켜짐으로 회귀", ->(r) {
+     env = env_list(File.join(r, API)).map { |e| e["name"] == "MAFEST_LLM_SUMMARY" ? e.merge("value" => "1") : e }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+   }, "MAFEST_LLM_SUMMARY는"],
+  ["자동 재시도 켜짐으로 회귀", ->(r) {
+     env = env_list(File.join(r, API)).map { |e| e["name"] == "MAFEST_LLM_RETRIES" ? e.merge("value" => "1") : e }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+   }, "MAFEST_LLM_RETRIES는"],
+  ["세션 풀이 연결 예산을 넘김", ->(r) {
+     env = env_list(File.join(r, API)).map { |e| e["name"] == "MAFEST_SESSION_POOL_MAX" ? e.merge("value" => "2") : e }
+     mutate_yaml(File.join(r, API), C0 + ["env"], env)
+     # 승인값은 2다. 예산 검사는 max_connections 를 낮춰 넘기는 방식으로 확인한다.
+     mutate_yaml(File.join(r, "kustomize/base/mafest-db/cluster.yaml"), ["spec", "postgresql", "parameters", "max_connections"], "40")
+   }, "max_connections"],
   ["지어낸 환경변수 이름", ->(r) {
      mutate_yaml(File.join(r, API), C0 + ["env"], env_list(File.join(r, API)) + [{ "name" => "VLLM_URL", "value" => "http://x" }])
    }, "Settings가 읽지 않는 환경변수"],

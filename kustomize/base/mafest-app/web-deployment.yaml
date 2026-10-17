@@ -60,7 +60,7 @@ spec:
         - name: web
           # 승인된 웹 릴리스(mafest-web 026ae629…)의 digest. 릴리스마다 사람이 승인한 값으로 바꾸고 validator의
           # 승인 상수도 함께 갱신한다.
-          image: ghcr.io/persona-runtime/mafest-web@sha256:f844a216d4ad796df82bf5c5ab82b848262b8af0fe7fc43d946f3c628efb4cb3
+          image: ghcr.io/persona-runtime/mafest-web@sha256:b2f40f4ee6d85481e41f1aab10a773fbad070fb13bc1b3741309ee170e32f152
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

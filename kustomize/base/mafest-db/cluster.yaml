@@ -78,6 +78,28 @@ spec:
         inherit: true
         passwordSecret:
           name: mafest-db-runtime
+      # 멀티턴 확인 세션 저장소(스키마 mafest_confirm)에 쓰는 API 전용 역할. 특권이 없고 로그인만 한다.
+      # 비밀번호는 사람이 mafest-data에 만드는 Secret mafest-db-session(kubernetes.io/basic-auth,
+      # username=mafest_session, password)에서 읽는다. 테이블 권한은 SQL로 직접 주지 않고 마이그레이션 CLI
+      # (`python -m mafest.session.migrate --apply --app-role mafest_session`)의 APP_GRANTS가 준다.
+      # DB 접속(CONNECT)만 db/grants/mafest_roles.sql이 준다. 검색 runtime(mafest_runtime)과 역할·비밀번호를 섞지 않는다.
+      - name: mafest_session
+        ensure: present
+        login: true
+        inherit: true
+        passwordSecret:
+          name: mafest-db-session
+      # 세션 스키마(mafest_confirm) 전용 마이그레이션(DDL) 역할. 상품 owner(mafest_owner)를 쓰지 않는 이유:
+      # `ALTER DEFAULT PRIVILEGES FOR ROLE mafest_owner ... TO mafest_runtime`(db/grants/mafest_roles.sql)은 owner 가
+      # 어느 스키마에 만들든 적용돼, 새 세션 테이블(실행 키·질문 포함)을 검색 계정이 읽게 된다. 이 역할에는 그런 기본 권한을
+      # 두지 않으므로 새 테이블은 이 역할만 소유하고 mafest_runtime·PUBLIC 은 접근하지 못한다.
+      # 비밀번호는 사람이 mafest-data 에 만드는 Secret mafest-db-session-migrator(basic-auth)에서 읽는다. 특권 없음.
+      - name: mafest_session_migrator
+        ensure: present
+        login: true
+        inherit: true
+        passwordSecret:
+          name: mafest-db-session-migrator
 
   storage:
     # local-path는 allowVolumeExpansion=false라 나중에 못 늘린다. 문서 11 §DB "10Gi 권고".

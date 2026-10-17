@@ -2,7 +2,7 @@
 -- → 적재 → 기존 객체 GRANT 보정). 이 파일은 그중 "적재 전" 부분이다. 멱등이다.
 --
 -- 누가·어디서: Cluster mafest-db가 2/2로 뜬 뒤 superuser로 한 번 실행한다(runbooks/mafest-data, A7).
---   kubectl cnpg psql mafest-db -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_roles.sql
+--   kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_roles.sql
 --   ag_catalog는 확장(age)을 만든 superuser가 소유해서 owner(mafest_owner)는 여기에 GRANT를 줄 수 없다.
 --   ALTER ROLE ... SET도 superuser·CREATEROLE 권한이 필요하다.
 --
@@ -21,6 +21,12 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mafest_runtime') THEN
         RAISE EXCEPTION 'mafest_runtime 역할이 없다 — Secret mafest-db-runtime과 managed.roles 상태를 먼저 본다';
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mafest_session') THEN
+        RAISE EXCEPTION 'mafest_session 역할이 없다 — Secret mafest-db-session과 managed.roles 상태를 먼저 본다';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mafest_session_migrator') THEN
+        RAISE EXCEPTION 'mafest_session_migrator 역할이 없다 — Secret mafest-db-session-migrator와 managed.roles 상태를 먼저 본다';
+    END IF;
 END
 $roles$;
 
@@ -28,6 +34,11 @@ $roles$;
 -- cnpg_metrics_exporter는 CNPG exporter가 쓰는 역할이다. 빼먹으면 지표 수집이 끊긴다(문서 35 §DB, persona-db 운영 때 겪음).
 REVOKE ALL ON DATABASE mafest FROM PUBLIC;
 GRANT CONNECT ON DATABASE mafest TO mafest_owner, mafest_runtime, cnpg_metrics_exporter;
+-- 세션 저장소 역할은 접속만 여기서 준다. 스키마·테이블 권한은 마이그레이션 CLI(--app-role)가 준다. TEMP·CREATE는 주지 않는다.
+GRANT CONNECT ON DATABASE mafest TO mafest_session;
+-- 세션 마이그레이션 역할은 접속과 스키마 생성(DB CREATE)만 받는다. 이 역할을 대상으로 한 ALTER DEFAULT PRIVILEGES 는 두지 않는다.
+-- mafest_owner 의 기본 권한(아래)은 owner 가 만든 객체에만 적용되므로 이 역할이 만든 세션 테이블에는 걸리지 않는다. TEMP 도 주지 않는다.
+GRANT CONNECT, CREATE ON DATABASE mafest TO mafest_session_migrator;
 -- owner는 적재 중 임시 표를 쓸 수 있다. runtime에는 TEMP를 주지 않는다(읽기 전용).
 GRANT TEMPORARY ON DATABASE mafest TO mafest_owner;
 

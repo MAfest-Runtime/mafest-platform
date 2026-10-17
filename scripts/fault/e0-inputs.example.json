@@ -1,0 +1,14 @@
+{
+  "_설명": "E0 사전 입력 예시. 경로는 llm-call-basis.json 의 증명된 경로(상품 상세)여야 한다. {domain}/{product_id} 는 실제로 존재하는 상품의 공개 도메인 키와 id 로 사람이 채운다(null 은 거부된다). 공개 문서에는 실제 상품 id 를 남기지 않는다.",
+  "method": "GET",
+  "request_kind": "db_read_only",
+  "path": null,
+  "interval_s": 0.5,
+  "duration_s": 180,
+  "inject_after_s": 30,
+  "request_timeout_s": 10,
+  "gpu_call_cap": 0,
+  "abort_after_consecutive_failures": 240,
+  "recovery_timeout_s": 120,
+  "llm_counter_poll_s": 10
+}
