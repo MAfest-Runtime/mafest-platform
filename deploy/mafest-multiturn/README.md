@@ -156,34 +156,39 @@ lease 는 코드 고정이다(`요청 시한 + 10초`). 선언에서 바꾸지 �
 
 CP의 `~/mafest-api-db.backup.yaml` 은 이번에 열지도 지우지도 않았다. 새 접속·권한이 적용되고 정상 동작과 복구 경로가 확인된 뒤 사용자가 정확한 경로와 보존 필요성을 검토해 따로 정리한다. 백업 파일 삭제와, 이미 노출된 자격의 회전 필요성은 별개로 판단한다.
 
-## 11. 이미지 게시 후 채울 값과 운영 적용 순서 (계획만, 아무것도 실행하지 않았다)
+## 11. 이미지 digest 와 운영 적용 순서 (런북 확정본 — 운영 적용·권한 검사는 아직 실행하지 않았다)
 
-**게시 후 채울 값** — 추측으로 채우지 않는다. 비어 있는 동안 검사기·순서 도구가 막는다.
+**이미지 digest** — 게시된 digest 를 반영했다. 추측으로 채우지 않고, 바꿀 때는 아래 위치를 함께 바꾼다.
 
-| 값 | 위치 |
-| --- | --- |
-| API 이미지 digest (`c48f578` 이후 빌드) | `kustomize/base/mafest-app/api-deployment.yaml` 이미지, `scripts/validate-mafest-app-manifests.sh` 의 `APPROVED_API_IMAGE` |
-| 마이그레이션 Job 이미지 digest (같은 API 이미지) | `drafts/migration-job.yaml.draft` 의 `0×64` 자리. 채운 뒤 `kustomize/base/mafest-load/job-session-migrate.yaml` 로 옮기고 kustomization 의 주석 한 줄을 켠 상태에서만 적용 |
-| 웹 이미지 digest (`f87c580` 빌드) | `kustomize/base/mafest-app/web-deployment.yaml`, 같은 검사기의 `APPROVED_WEB_IMAGE` |
-| 호출 상한 증명의 digest | `scripts/fault/llm-call-basis.json` — 새 digest 에서는 기존 증명이 무효이므로 다시 만든다(이번 범위 아님) |
-| 정리 CronJob 의 role·Secret·digest | 정리를 켜는 시점에 |
+| 값 | 상태 | 위치 |
+| --- | --- | --- |
+| API 이미지 (`mafest-app@sha256:6523b6de…8c62e0`) | 반영함 | `kustomize/base/mafest-app/api-deployment.yaml`, `scripts/validate-mafest-app-manifests.sh` 의 `APPROVED_API_IMAGE` |
+| 마이그레이션 Job 이미지 (API 와 같은 digest) | 반영함 | `drafts/migration-job.yaml.draft`. 적용 때 `kustomize/base/mafest-load/job-session-migrate.yaml` 로 옮기고 kustomization 의 주석 한 줄을 켠다 |
+| 웹 이미지 (`mafest-web@sha256:b2f40f4e…2f152`) | 반영함 | `kustomize/base/mafest-app/web-deployment.yaml`, 같은 검사기의 `APPROVED_WEB_IMAGE` |
+| DB 이미지(CNPG 포함) | **변경 없음** | `kustomize/base/mafest-db/cluster.yaml` |
+| 호출 상한 증명의 digest | **남음** | `scripts/fault/llm-call-basis.json` 은 옛 API digest 에 묶여 있어 새 digest 에서는 무효다. 장애 시험 전에 다시 만든다 |
+| 정리 CronJob 의 role·Secret·digest | **남음** | 정리를 켜는 시점에 |
 
 **운영 적용 순서** (모두 사람이 승인한 뒤 한 단계씩. 모든 명령은 승인한 context 와 정확한 namespace 를 직접 적는다. 터미널 기본 context·namespace 에 의존하지 않는다.
 `<승인한-context>` 는 적용 직전에 사람이 정한 kubectl context 이름으로 바꾼다. cnpg 플러그인 명령은 `--context` 같은 전역 플래그를 플러그인 이름 **뒤**에 둔다. 플러그인 앞에 두면 kubectl 이 플러그인을 찾지 못한다):
 
-1. Secret 준비 — 값은 출력하지 않는다. 비밀번호·DSN·키는 0600 임시 파일에 두고 끝나면 지운다.
+0. context·namespace 확인(읽기 전용) — 이후 모든 명령은 같은 context 를 쓴다. 현재 API 이미지 digest 를 **롤백용으로 기록**한다.
+   - `kubectl --context <승인한-context> -n mafest-app get deployment mafest-api -o jsonpath='{.spec.template.spec.containers[0].image}'`
+   - `kubectl --context <승인한-context> -n mafest-data get cluster.postgresql.cnpg.io mafest-db`
+1. Secret·전용 역할 준비 — 먼저 Secret 을 만든다. 값은 출력하지 않는다. 비밀번호·DSN·키는 0600 임시 파일에 두고 끝나면 지운다.
    - `kubectl --context <승인한-context> -n mafest-data create secret generic mafest-db-session --type=kubernetes.io/basic-auth --from-literal=username=mafest_session --from-file=password=<0600 파일>`
    - `kubectl --context <승인한-context> -n mafest-data create secret generic mafest-db-session-migrator --type=kubernetes.io/basic-auth --from-literal=username=mafest_session_migrator --from-file=password=<0600 파일>`
    - `kubectl --context <승인한-context> -n mafest-app create secret generic mafest-api-session --from-file=PGURL_SESSION=<0600 파일> --from-file=MAFEST_SESSION_KEY=<0600 파일>` (`mafest_session` 계정 DSN, 새 난수 32바이트 이상, 두 Pod 공용)
    - `kubectl --context <승인한-context> -n mafest-app create secret generic mafest-session-migrate-db --from-file=PGURL=<0600 파일>` (`mafest_session_migrator` 계정 DSN, 마이그레이션 Job 전용)
-2. `mafest-db` Application 에서 Cluster 한 건 선택 Sync(`argocd/README.md` 절차) 뒤 managed role 확인: `kubectl --context <승인한-context> -n mafest-data get cluster.postgresql.cnpg.io mafest-db`
-3. 역할 권한: `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_roles.sql`
-4. 사전 점검(읽기 전용): `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_precheck.sql` — `ok absent` 또는 `ok owned` 일 때만 계속한다. 그 밖이면 소유권을 바꾸지 않고 출력만 보고한다.
-5. 마이그레이션: digest 를 채운 Job 을 적용하고 결과를 확인한다.
+1b. `mafest-db` Application 에서 Cluster 한 건 선택 Sync(`argocd/README.md` 절차) 뒤 managed role 확인: `kubectl --context <승인한-context> -n mafest-data get cluster.postgresql.cnpg.io mafest-db`
+1c. 역할 권한: `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_roles.sql`
+2. 읽기 전용 사전 점검: `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_precheck.sql` — `ok absent` 또는 `ok owned` 일 때만 계속한다. 그 밖이면 소유권을 바꾸지 않고 출력만 보고한다.
+3. 마이그레이션: Job 초안(digest 반영됨)을 `kustomize/base/mafest-load/job-session-migrate.yaml` 로 옮기고 kustomization 의 주석 한 줄을 켠 뒤 적용하고 결과를 확인한다.
    - `kubectl --context <승인한-context> -n mafest-app apply -k kustomize/base/mafest-load`
    - `kubectl --context <승인한-context> -n mafest-app wait --for=condition=complete job/mafest-session-migrate --timeout=300s`
    - `kubectl --context <승인한-context> -n mafest-app logs job/mafest-session-migrate` (적용 출력과 `--check` 성공 확인)
    - 확인 뒤 `kubectl --context <승인한-context> -n mafest-app delete job mafest-session-migrate` 로 Job 을 지우고 kustomization 은 다시 비운다.
-6. 유효 권한 검사(읽기 전용): `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_check.sql` — `세션 유효 권한 검사 통과` 이고 종료 코드가 0 일 때만 계속한다.
-7. API 선택 Sync(`mafest-api` Deployment 한 건) → 두 Pod Ready 와 롤링 확인: `kubectl --context <승인한-context> -n mafest-app rollout status deployment/mafest-api`. 이어서 웹 선택 Sync. 순서 도구: `python3 scripts/mafest_deploy_order.py --offline`.
-8. 롤백은 §4.
+4. 읽기 전용 유효 권한 검사: `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_check.sql` — `세션 유효 권한 검사 통과` 이고 종료 코드가 0 일 때만 계속한다.
+5. (2~4 가 모두 통과한 뒤에만) API 선택 Sync(`mafest-api` Deployment 한 건) → 두 Pod Ready 와 롤링 확인: `kubectl --context <승인한-context> -n mafest-app rollout status deployment/mafest-api`. 순서 도구: `python3 scripts/mafest_deploy_order.py --offline`.
+6. API 가 정상인 것을 확인한 뒤 웹 선택 Sync → `kubectl --context <승인한-context> -n mafest-app rollout status deployment/mafest-web`.
+7. 롤백은 §4(0단계에서 기록한 이전 API digest 로 되돌린다. 세션 테이블·역할·Secret 은 지우지 않는다).

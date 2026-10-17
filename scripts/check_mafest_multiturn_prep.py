@@ -59,6 +59,7 @@ CODE_SPAN = re.compile(r"`([^`]*)`")
 INTENDED_CHANGES = {
     "db/grants/mafest_roles.sql",
     "kustomize/base/mafest-app/api-deployment.yaml",
+    "kustomize/base/mafest-app/web-deployment.yaml",  # 릴리스 이미지 digest 반영
     "kustomize/base/mafest-db/cluster.yaml",
     "kustomize/base/mafest-load/kustomization.yaml",
 }
