@@ -71,14 +71,79 @@ class CheckerDetectsViolationsTest(unittest.TestCase):
         )
         self.assertEqual(self.run_checker().returncode, 1)
 
-    def test_reusing_existing_allowed_label_is_rejected(self) -> None:
-        text = (self.drafts / "migration-job.yaml.draft").read_text(encoding="utf-8")
-        (self.drafts / "migration-job.yaml.draft").write_text(
+    def test_cleanup_reusing_existing_allowed_label_is_rejected(self) -> None:
+        # 예외는 마이그레이션 Job 하나뿐이다. 다른 워크로드가 기존 허용 라벨을 쓰면 여전히 실패한다.
+        text = (self.drafts / "session-cleanup-cronjob.yaml.draft").read_text(
+            encoding="utf-8"
+        )
+        (self.drafts / "session-cleanup-cronjob.yaml.draft").write_text(
             text.replace(
-                "app.kubernetes.io/name: mafest-session-migrate",
+                "app.kubernetes.io/name: mafest-session-cleanup",
                 "app.kubernetes.io/name: mafest-loader",
             ),
             encoding="utf-8",
+        )
+        self.assertEqual(self.run_checker().returncode, 1)
+
+    def test_migration_job_must_use_the_loader_label_it_reuses(self) -> None:
+        text = (self.drafts / "migration-job.yaml.draft").read_text(encoding="utf-8")
+        (self.drafts / "migration-job.yaml.draft").write_text(
+            text.replace(
+                "app.kubernetes.io/name: mafest-loader",
+                "app.kubernetes.io/name: mafest-session-migrate",
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mafest-loader", result.stderr)
+
+    def test_migration_job_fails_when_the_reused_loader_policy_is_gone(self) -> None:
+        path = self.root / "kustomize/base/networkpolicy/mafest-app/network-policy.yaml"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "name: mafest-allow-loader-egress", "name: mafest-allow-other-egress"
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("재사용할 기존 정책", result.stderr)
+
+    def test_migration_job_using_the_product_owner_secret_is_rejected(self) -> None:
+        # owner 의 전역 기본 권한이 새 세션 테이블을 검색 계정에 열어 준다.
+        self.edit(
+            "migration-job.yaml.draft", "mafest-session-migrate-db", "mafest-migrator"
+        )
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mafest-migrator", result.stderr)
+
+    def test_migration_job_without_the_dedicated_secret_is_rejected(self) -> None:
+        self.edit(
+            "migration-job.yaml.draft", "mafest-session-migrate-db", "some-other-secret"
+        )
+        self.assertEqual(self.run_checker().returncode, 1)
+
+    def edit_readme(self, old: str, new: str) -> None:
+        path = self.root / "deploy/mafest-multiturn/README.md"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    def test_ops_command_without_context_is_rejected(self) -> None:
+        self.edit_readme(
+            "kubectl --context <승인한-context> -n mafest-app wait",
+            "kubectl -n mafest-app wait",
+        )
+        result = self.run_checker()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--context", result.stderr)
+
+    def test_ops_command_without_namespace_is_rejected(self) -> None:
+        self.edit_readme(
+            "--context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_check.sql",
+            "--context <승인한-context> -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_check.sql",
         )
         self.assertEqual(self.run_checker().returncode, 1)
 
@@ -101,7 +166,7 @@ class CheckerDetectsViolationsTest(unittest.TestCase):
     def test_delete_with_limit_in_cleanup_draft_is_rejected(self) -> None:
         self.edit(
             "session-cleanup-cronjob.yaml.draft",
-            "              command:\n                - __APP_CLEANUP_CLI__",
+            "              command:\n                - python\n                - -m\n                - mafest.session.cleanup",
             "              command:\n                - psql -c 'DELETE FROM t LIMIT 10'",
         )
         self.assertEqual(self.run_checker().returncode, 1)

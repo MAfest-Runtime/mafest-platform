@@ -112,6 +112,25 @@ raise "[안전] mafest_runtime은 managed.roles로 만든다(비밀번호는 Sec
 %w[superuser createdb createrole replication bypassrls].each do |flag|
   raise "[안전] mafest_runtime에 #{flag}를 주지 않는다" if runtime_role[flag] == true
 end
+# 세션 저장소 API 역할: 검색 runtime과 별도 역할·별도 Secret이고 특권이 없다(권한은 마이그레이션 CLI의 APP_GRANTS).
+session_role = (spec.dig("managed", "roles") || []).find { |r| r["name"] == "mafest_session" }
+raise "[안전] mafest_session은 managed.roles로 만든다(비밀번호는 Secret mafest-db-session)" unless session_role &&
+  session_role["login"] == true && session_role.dig("passwordSecret", "name") == "mafest-db-session"
+%w[superuser createdb createrole replication bypassrls].each do |flag|
+  raise "[안전] mafest_session에 #{flag}를 주지 않는다" if session_role[flag] == true
+end
+raise "[안전] 세션 역할과 검색 runtime은 같은 Secret을 쓰지 않는다" if
+  session_role.dig("passwordSecret", "name") == runtime_role.dig("passwordSecret", "name")
+# 세션 스키마 마이그레이션(DDL) 역할: 상품 owner(mafest_owner)가 아니다. owner 의 전역 기본 권한이 새 세션 테이블을
+# 검색 계정에 열어 주기 때문이다. 별도 역할·별도 Secret이고 특권이 없다.
+migrator_role = (spec.dig("managed", "roles") || []).find { |r| r["name"] == "mafest_session_migrator" }
+raise "[안전] mafest_session_migrator는 managed.roles로 만든다(비밀번호는 Secret mafest-db-session-migrator)" unless migrator_role &&
+  migrator_role["login"] == true && migrator_role.dig("passwordSecret", "name") == "mafest-db-session-migrator"
+%w[superuser createdb createrole replication bypassrls].each do |flag|
+  raise "[안전] mafest_session_migrator에 #{flag}를 주지 않는다" if migrator_role[flag] == true
+end
+role_secrets = (spec.dig("managed", "roles") || []).map { |r| r.dig("passwordSecret", "name") }
+raise "[안전] managed 역할의 비밀번호 Secret 이름이 서로 달라야 한다(검색·세션·마이그레이션 자격을 섞지 않는다)" unless role_secrets.uniq.length == role_secrets.length
 
 storage = spec.fetch("storage")
 raise "[안전] storageClass는 local-path다" unless storage["storageClass"] == "local-path"
@@ -229,6 +248,30 @@ check = sql.call("mafest_runtime_check.sql")
   raise "[안전] 비밀번호를 SQL에 두지 않는다(managed.roles·Secret 사용)" if text =~ /\bPASSWORD\b/i
 end
 raise "[안전] cnpg_metrics_exporter CONNECT를 유지해야 한다 — 빠지면 지표 수집이 끊긴다" unless roles =~ /GRANT CONNECT ON DATABASE mafest TO [^;]*cnpg_metrics_exporter/i
+raise "[안전] mafest_session은 DB CONNECT만 SQL로 받는다(테이블 권한은 마이그레이션 CLI)" unless roles =~ /GRANT CONNECT ON DATABASE mafest TO mafest_session\s*;/i
+[roles, post_load].each do |text|
+  raise "[안전] mafest_session에 SQL로 테이블·스키마 권한을 주지 않는다(마이그레이션 CLI --app-role 몫)" if
+    text =~ /GRANT\s+(?!CONNECT\b)[^;]*\bTO\s+[^;]*mafest_session/im
+end
+raise "[안전] mafest_session_migrator는 DB CONNECT·CREATE만 SQL로 받는다" unless roles =~ /GRANT CONNECT, CREATE ON DATABASE mafest TO mafest_session_migrator\s*;/i
+raise "[안전] mafest_session_migrator를 대상으로 한 ALTER DEFAULT PRIVILEGES를 두지 않는다(새 세션 테이블이 다른 역할에 열린다)" if
+  [roles, post_load].any? { |text| text =~ /ALTER\s+DEFAULT\s+PRIVILEGES\s+FOR\s+ROLE\s+mafest_session_migrator/i }
+raise "[안전] 세션 테이블이 검색 계정에 열리지 않게 mafest_owner 기본 권한 줄은 그대로 두고 owner 로 세션 스키마를 만들지 않는다" if
+  roles =~ /CREATE\s+SCHEMA\s+[^;]*mafest_confirm/i || post_load =~ /mafest_confirm/i
+# 세션 스키마 사전 점검·유효 권한 검사 SQL: 읽기 전용(BEGIN READ ONLY … ROLLBACK)이며 변경문이 없다.
+{
+  "mafest_session_precheck.sql" => %w[mafest_runtime aclexplode],
+  "mafest_session_check.sql" => %w[owner-schema owner-objects session-usage session-allow session-deny session-ddl isolated-schema isolated-table public-acl role-membership default-acl mafest_runtime aclexplode pg_has_role pg_default_acl],
+}.each do |name, required|
+  text = sql.call(name)
+  raise "[안전] #{name}은 BEGIN READ ONLY와 ROLLBACK으로 감싸야 한다" unless text =~ /\bBEGIN\s+READ\s+ONLY\s*;/i && text =~ /\bROLLBACK\s*;/i
+  bare = text.gsub(/'[^']*'/, "''") # 문자열 안의 권한 이름(CREATE 등)은 변경문이 아니다
+  raise "[안전] #{name}에 변경문(ALTER·DROP·GRANT·REVOKE·INSERT·UPDATE·DELETE·TRUNCATE·CREATE)이 있다 — 읽기 전용이어야 한다" if
+    bare =~ /\b(ALTER|DROP|GRANT|REVOKE|INSERT|UPDATE|DELETE|TRUNCATE|CREATE)\b/i
+  required.each do |item|
+    raise "[안전] #{name}에 #{item} 검사가 없다" unless text.include?(item)
+  end
+end
 raise "[안전] PUBLIC의 DB 기본 권한을 걷어야 한다" unless roles =~ /REVOKE ALL ON DATABASE mafest FROM PUBLIC/i
 raise "[안전] 두 역할에 ag_catalog USAGE가 필요하다" unless roles =~ /GRANT USAGE ON SCHEMA ag_catalog TO mafest_owner, mafest_runtime/i
 raise "[안전] runtime search_path는 ag_catalog, \"$user\", public이다(preload 전제)" unless roles =~ /ALTER ROLE mafest_runtime SET search_path = ag_catalog, "\$user", public/i

@@ -1,8 +1,9 @@
 # 멀티턴 상태 저장 — 플랫폼 정적 준비 인계
 
-상태: **플랫폼 정적 준비·계약 인계 완료 / 앱·웹 계약 확정·운영 적용·장애 시험 미실행.**
-이 디렉터리의 `drafts/` 는 `.draft`·`.tmpl` 확장자라 어떤 kustomize 렌더에도 들어가지 않는다. 기존 Deployment·정책·권한 파일은 바꾸지 않았다.
-작업 기준: `origin/develop@c792822`(로컬 ref). 원격은 이후 `09f59f1` 까지 앞서 있음을 `git fetch --dry-run` 으로만 봤고 가져오지 않았다.
+상태: **멀티턴 세션 저장소 배포 선언 완성(로컬 렌더·정적 검사까지) / 이미지 digest 미확정 / 운영 적용·Secret 생성·DB 마이그레이션·장애 시험 미실행.**
+앱 기준: API `c48f578`, 웹 `f87c580`(둘 다 게시 이미지 digest 미확정). 앱 계약의 정본은 앱 저장소의 `config.py`, `session/schema.py`, `session/migrate.py` 다.
+`drafts/` 는 `.draft`·`.tmpl` 확장자라 어떤 kustomize 렌더에도 들어가지 않는다. 적용되는 선언은 API Deployment(세션 env·Secret 참조),
+CNPG Cluster(`mafest_session` managed role), `db/grants/mafest_roles.sql`(CONNECT 한 줄)이다. 작업 기준: `origin/develop@e79e0c5`.
 실클러스터·DB·SSH·LLM에는 접속하지 않았다. 아래 "라이브 값"은 모두 사용자 제공 기록이며 이번에 확인하지 않았다.
 
 ## 읽는 순서
@@ -13,8 +14,9 @@
 | 2 | `drafts/api-db-credential.patch.yaml.draft` | 비밀번호 없는 PGURL + PGPASSWORD 분리 제안 (비활성) |
 | 3 | `scripts/mafest_sync_db_secret.py` | namespace 간 비밀번호 전달 도구. 기본은 계획 출력, 값은 디코드·출력하지 않음 |
 | 4 | `scripts/test_mafest_credentials.py` | 위 도구와 libpq의 PGPASSWORD 동작을 합성 값으로 시험 |
-| 5 | `drafts/session-role-grants.sql.tmpl` | 세션 전용 role 권한 템플릿 (이름 미정이라 비활성) |
-| 6 | `drafts/migration-job.yaml.draft`, `drafts/network-policy.yaml.draft` | 마이그레이션 Job과 전용 NetworkPolicy 초안 |
+| 5 | `drafts/session-role-grants.sql.tmpl` | **대체됨.** 세션 role 권한은 마이그레이션 CLI 의 `--app-role` 이 준다. 참고로만 남김 |
+| 5b | `db/grants/mafest_session_precheck.sql`, `db/grants/mafest_session_check.sql` | 세션 스키마 사전 점검(소유권을 바꾸지 않음)과 마이그레이션 후 유효 권한 검사(둘 다 읽기 전용) |
+| 6 | `drafts/migration-job.yaml.draft`, `drafts/network-policy.yaml.draft` | 마이그레이션 Job(적재 Job 패턴·기존 loader 정책 재사용, digest만 미확정)과 정리 CronJob 몫의 NetworkPolicy 초안 |
 | 7 | `drafts/session-cleanup-cronjob.yaml.draft` | 정리 CronJob (`suspend: true`, 삭제 SQL 없음) |
 | 8 | `scripts/mafest_deploy_order.py` | 마이그레이션 → 확인 → API 선택 Sync 절차와 검사기 (실행 모드 없음) |
 | 9 | `scripts/check_mafest_multiturn_prep.py` | 위 초안들의 정적 검사기 |
@@ -52,26 +54,48 @@
 
 ## 3. 권한과 연결 예산
 
-- 검색 `mafest_runtime` 은 읽기 전용을 유지한다. 세션 상태는 **별도 role·Secret·쓰기 풀**을 제안한다(이름·풀 크기는 앱과 합의). 템플릿은 `mafest_runtime`/`mafest_owner`/`postgres` 를 대상에서 거부한다.
-- 마이그레이션·정리 role은 API role과 구분한다. owner Secret(`mafest-db-owner`)은 마이그레이션 Job에만 연결하고 API 컨테이너에는 연결하지 않는다.
-- 연결 예산(선언 값 기준 계산이며 실측이 아니다): Pod당 SQL 풀 4 + AGE 풀 2 = 6. 롤링 중 최대 3 Pod → 18. 세션 풀을 Pod당 s 라 하면 `3×(6+s) + 마이그레이션 1 + 정리 1 + 모니터링·복제 여유 약 5 ≤ 64 − 예약 3`. 이 계산이면 s ≤ 12 이지만 CNPG 메모리 1Gi 가정에서 연결별 메모리를 고려해 앱과 s 를 작게 정한다.
-- 정확한 schema/table/sequence 가 미확정이라 권한 SQL은 활성화하지 않았다. 템플릿의 GRANT 는 문법상 멱등이지만 **실제 DB에서 두 번 실행해 확인한 것은 아니다.**
+- 검색 `mafest_runtime` 은 읽기 전용을 유지한다. 세션 저장소는 **별도 role `mafest_session`**(CNPG managed role, 로그인만·특권 없음)과 **별도 Secret**을 쓴다.
+  - 비밀번호 Secret: `mafest-db-session`(mafest-data, basic-auth). API가 읽는 Secret: `mafest-api-session`(mafest-app, 키 `PGURL_SESSION`·`MAFEST_SESSION_KEY`). 둘 다 사람이 만들며 Git에 값이 없다.
+  - 두 API Pod가 같은 `mafest-api-session` 을 참조하므로 같은 서버 키를 쓴다. 로컬 시험에서 만든 세션 DSN·서버 키는 운영에 복사하지 않고 운영용 새 난수(32바이트 이상)로 만든다.
+- **DDL(마이그레이션) 계정은 상품 owner(`mafest_owner`, Secret `mafest-migrator`)가 아니라 세션 전용 `mafest_session_migrator`** 다(CNPG managed role, 특권 없음, Secret `mafest-db-session-migrator` / Job 전용 DSN Secret `mafest-session-migrate-db`).
+  - 이유: `db/grants/mafest_roles.sql` 의 `ALTER DEFAULT PRIVILEGES FOR ROLE mafest_owner GRANT SELECT ON TABLES / USAGE ON SCHEMAS TO mafest_runtime` 은 owner 가 **어느 스키마에 만들든** 적용된다. owner 로 세션 테이블을 만들면 실행 키·질문이 든 테이블을 검색 계정이 읽게 된다.
+    이 전역 기본 권한은 `IN SCHEMA … REVOKE` 로 일부만 제외할 수 없으므로(PostgreSQL 기본 권한 규칙), 상품 owner 의 기본 권한은 건드리지 않고 **owner 를 쓰지 않는 방식**으로 막는다.
+  - `mafest_session_migrator` 는 DB `CONNECT, CREATE`(스키마 생성)만 받고 이 역할을 대상으로 한 기본 권한은 없다. 새 스키마·테이블은 이 역할이 소유하며 검색 계정·PUBLIC·`mafest_owner` 는 접근할 수 없다.
+  - API 에는 이 역할의 Secret 을 연결하지 않는다(검사기가 API YAML 안의 `mafest-migrator`·`mafest-db-owner`·`mafest-session-migrate-db`·`mafest-db-session-migrator`·`PGURL_SESSION_MIGRATE` 를 거부한다).
+- 권한: DB 접속(CONNECT)만 `db/grants/mafest_roles.sql` 이 준다. 스키마 USAGE, `search_runs`·`confirm_sessions`·`confirm_submissions` 의 SELECT/INSERT/UPDATE, `schema_migrations` 의 SELECT 는 마이그레이션 CLI(`--apply --app-role mafest_session`)의 APP_GRANTS 가 준다. DELETE 는 주지 않는다.
+- 연결 예산(선언 값 기준 계산이며 실측이 아니다): Pod당 SQL 풀 4 + AGE 풀 2 + 세션 풀 2 = 8. 롤링 중 최대 3 Pod → 24, `max_connections` 64 의 절반(32) 이하다. 나머지는 적재·마이그레이션 Job, exporter, 운영 접속, 예약 연결용이다.
+  검사기가 `(replicas + maxSurge) × 세 풀의 합 × 2 ≤ max_connections` 를 계산한다. 세션 풀은 첫 사용 때 연결하므로 실제 사용량은 이보다 작을 수 있다.
 
 ## 4. 마이그레이션과 배포 순서
 
-1. 앱이 이미지 digest·마이그레이션 CLI·기대 버전을 확정한다(`drafts/migration-job.yaml.draft` 의 `__…__` 자리).
-2. 사람이 `mafest-data` 에 마이그레이션 Job 을 **따로** 만든다. Argo hook·sync wave 에 맡기지 않는다 — 선택 Sync 는 hook 을 실행하지 않고, 서로 다른 Application 의 wave 숫자는 선행을 보장하지 않는다.
-3. Job 이 Complete 이고 적용 버전·role 권한이 기대와 같을 때만 API 선택 Sync 를 요청한다. `scripts/mafest_deploy_order.py` 가 이 순서를 가짜 실행기로 검사한다(실패·미확인이면 Sync 미요청).
-4. 앱 롤백과 DB 롤백은 다르다. 구·신 앱이 공존하므로 비파괴 확장을 기본으로 하고, 이미지 SHA를 되돌리는 것을 테이블 복구라고 부르지 않는다.
-5. 전제(미확인): `mafest-data` 에 비공개 이미지 pull Secret `mafest-ghcr` 가 있어야 한다. 없으면 사람이 만든다.
+순서: **권한·Secret 준비 → 마이그레이션 완료 및 버전 확인 → API → 웹.** (실행 명령은 §11, 아직 실행하지 않았다.)
+
+1. 앱 CLI 는 `python -m mafest.session.migrate (--apply [--app-role R] | --check)` 이다. DSN 은 인자가 아니라 환경변수(또는 파일) `PGURL_SESSION_MIGRATE` 로 읽는다. 종료 코드는 0 정상 / 1 오류 / 2 `--check` 에서 미적용 버전 있음이다.
+   역할을 만들지 않고 GRANT 만 하므로 managed role 이 먼저 있어야 한다. 최신 버전은 1, 버전 1 체크섬은 `sha256:2ff88fce82b07dc8d1da8ad4731ecf3d803f34b7492cf833b6b99f9fc5257f42` 이며 CLI 가 적용된 체크섬을 코드와 대조한다.
+   `--check` 는 `--app-role` 권한을 검증하지 않는다. 권한은 `--apply` 출력과 DB 쪽 확인으로 따로 본다.
+2. 마이그레이션 전 **읽기 전용 사전 점검**(`db/grants/mafest_session_precheck.sql`)이 `mafest_confirm` 스키마 상태를 보고한다. 스키마가 이미 있으면 소유권을 바꾸지 않고 소유자·객체 소유자·검색 계정/PUBLIC 접근을 보고한 뒤 멈춘다(없거나 `mafest_session_migrator` 소유일 때만 진행).
+   `mafest_deploy_order.py` 도 Job 생성 전에 이 상태를 읽는다.
+3. 사람이 마이그레이션 Job 을 **따로** 만든다(`mafest-app` 네임스페이스, 라벨 `mafest-loader` — 기존 적재 Job 패턴과 NetworkPolicy 재사용, DSN 은 `mafest-session-migrate-db`). Argo hook·sync wave 에 맡기지 않는다 — 선택 Sync 는 hook 을 실행하지 않고, 서로 다른 Application 의 wave 숫자는 선행을 보장하지 않는다.
+4. Job 이 Complete 이고 버전이 기대와 같으며, 이어서 **유효 권한 검사**(`db/grants/mafest_session_check.sql`)가 통과할 때만 API 선택 Sync 를 요청한다.
+   이 검사는 `has_*_privilege`(역할 상속·PUBLIC 포함), PUBLIC ACL, 역할 멤버십, 마이그레이션 역할의 기본 권한 부재를 확인한다: `mafest_session` 은 필요한 SELECT/INSERT/UPDATE 만 가능하고 DELETE·DDL 은 불가, `mafest_runtime`·`mafest_owner`·PUBLIC 은 세션 스키마·테이블에 접근 불가. `scripts/mafest_deploy_order.py` 가 이 순서를 가짜 실행기로 검사한다(실패·미확인이면 Sync 미요청).
+5. 롤백: 앱 롤백과 DB 롤백은 다르다. 구·신 앱이 공존하므로 비파괴 확장을 기본으로 하고, 이미지 SHA를 되돌리는 것을 테이블 복구라고 부르지 않는다.
+   - 기능만 끄기: Deployment 의 `MAFEST_LLM_INTENT` 를 `"0"` 으로 되돌린 선언을 API 선택 Sync 한다. 세션 Secret 참조와 풀 설정은 그대로 두어도 된다.
+   - 이전 이미지로 복귀: API 이미지를 직전 승인 digest(`deploy/approved-sync.md` 의 직전 SHA)로 되돌려 Sync 한다. 이전 이미지는 모르는 env 를 무시한다.
+   - **어느 경우에도 `mafest_confirm` 스키마·테이블·`mafest_session`·`mafest_session_migrator` role·Secret 은 삭제하지 않는다.** 되돌린 뒤 다시 켤 때 진행 중이던 세션과 멱등 기록을 잃지 않기 위해서다.
+6. 전제(미확인): `mafest-app` 에 비공개 이미지 pull Secret `mafest-ghcr` 가 있다(기존 적재 Job 과 같다). Job 은 `mafest-app` 에서 돌므로 `mafest-data` 로 복사할 필요가 없다.
 
 ## 5. 정리 CronJob
 
-`suspend: true`, 기본 렌더 제외. 주기 5분, 세션 만료 후 1시간, 완료/실패 턴 24시간은 **정책 후보**이며 멱등 응답 보존·세션 자격 만료·감사와 함께 앱이 확정한다. 앱이 지켜야 할 것: 삭제 가능 조건 확인과 삭제를 한 트랜잭션에서(잠금 후 재검사), running·유효 lease·진행 중 자식 턴·재전송 보존 기록 제외, cascade 로 active 턴이 사라지지 않음, 상태 전이는 앱만. PostgreSQL DELETE 에는 LIMIT 이 없으므로 앱이 배치 삭제 함수/CLI 또는 키를 고르는 CTE 방식을 제공한다. `concurrencyPolicy: Forbid` 는 DB 잠금이 아니다.
+**첫 배포에서는 활성화하지 않는다.** `suspend: true`, 기본 렌더 제외. 앱 CLI 는 `python -m mafest.session.cleanup [--batch N] [--max-batches N] [--dry-run]` 이고 DSN 은 `PGURL_SESSION_CLEANUP` 으로 읽는다(정리 전용 role 은 `migrate --apply --cleanup-role` 로 SELECT·DELETE 를 준다). 켜기 전에 정리 role·Secret 을 정하고 `--dry-run` 으로 대상을 먼저 본다. API 에는 정리 기능이 없어 끄면 행이 쌓이지만, 만료 판정은 읽는 시점에 하므로 정합성 문제는 아니다(용량 회수용). 주기 5분, 세션 만료 후 1시간, 완료/실패 턴 24시간은 **정책 후보**이며 멱등 응답 보존·세션 자격 만료·감사와 함께 앱이 확정한다. 앱이 지켜야 할 것: 삭제 가능 조건 확인과 삭제를 한 트랜잭션에서(잠금 후 재검사), running·유효 lease·진행 중 자식 턴·재전송 보존 기록 제외, cascade 로 active 턴이 사라지지 않음, 상태 전이는 앱만. PostgreSQL DELETE 에는 LIMIT 이 없으므로 앱이 배치 삭제 함수/CLI 또는 키를 고르는 CTE 방식을 제공한다. `concurrencyPolicy: Forbid` 는 DB 잠금이 아니다.
 
 ## 6. 세션·lease 설정
 
-`MAFEST_SESSION_TTL_S=600`, `MAFEST_TURN_LEASE_TTL_S=30`, `MAFEST_TURN_LEASE_RENEW_S=10` 은 **합의 전 후보**이며 Deployment 에 넣지 않았다. 앱이 읽는 이름·검증이 확인되면 반영한다. `2×갱신 < TTL` 은 여유 조건일 뿐 장애 감지 시간을 보장하지 않는다(DB 지연·GC·재접속 포함). TTL < 요청 90초 도 90초 안 감지나 중복 생성 차단을 보장하지 않는다. 갱신은 오래 유지되는 트랜잭션과 분리해 즉시 commit 하고 fencing 하는 것이 앱 책임이다.
+앱 정본(`config.py`)에는 `MAFEST_SESSION_TTL_S`, `MAFEST_TURN_LEASE_TTL_S`, `MAFEST_TURN_LEASE_RENEW_S` 라는 설정이 **없다.** 이전 초안의 후보 값을 쓰지 않으며 Deployment 에도 넣지 않는다.
+앱이 실제로 읽는 값은 다음과 같고 모두 기본값을 쓴다: 확인 대기 세션 수명 `MAFEST_CONFIRM_TTL_S`(600초), 완료 응답 재전송 보관 `MAFEST_REPLAY_RETAIN_S`(3600초, 실제 보관은 `max(보관, 세션 수명 + 요청 시한 + 60)`).
+lease 는 코드 고정이다(`요청 시한 + 10초`). 선언에서 바꾸지 않는다. 장애 감지 시간 보장은 여전히 약속하지 않으며(DB 지연·GC·재접속 포함) 갱신·fencing 은 앱 책임이다.
+초기 활성화 설정은 Deployment 에 평문 값으로 둔다: `MAFEST_LLM_INTENT=1`, `MAFEST_LLM_STRUCTURED=1`, `MAFEST_LLM_RETRIES=0`, `MAFEST_LLM_SUMMARY=0`, `MAFEST_LLM_SUGGEST=0`, `MAFEST_SESSION_POOL_MAX=2`.
+앱은 켬/끔을 정확히 `"1"`/`"0"` 으로만 읽는다(`true` 는 꺼짐). 요약·제안의 앱 기본값은 켜짐이라 끄려면 `"0"` 을 명시해야 한다. `PGURL_SESSION` 이 없거나 `MAFEST_SESSION_KEY` 가 32바이트 미만이면 앱이 기동하지 못한다.
+세션 DB 는 `/healthz`·`/readyz` 에 포함되지 않아, DB 가 죽어 있어도 Pod 는 Ready 이고 첫 확인 요청에서 실패한다. 모델 주소·이름(`MAFEST_LLM_BASE_URL`, `MAFEST_LLM_MODEL`)은 기존 선언을 그대로 쓴다.
 
 ## 7. 관측
 
@@ -122,7 +146,8 @@
 
 ## 9. 앱·웹과 합의할 목록
 
-테이블/schema/sequence 이름, 세션 전용 role·Secret 이름·풀 크기, 마이그레이션 CLI·이미지 digest·버전 확인 방법, 정리 보존 기간·삭제 조건·배치 방식, 환경변수 이름·검증, 메트릭 이름·타입·라벨, 세션 API 경로·응답, 멱등 키 정책, lease 획득·갱신·fencing·취소, 외부 생성(vLLM) 결과 불명확 시 처리, DB 장애 시 RPO(비동기 복제에서 손실 0 약속 여부), `db_pool.py` 주석의 현재 운영(rw 단일) 반영.
+확정됨(앱 정본 기준): schema `mafest_confirm` 과 테이블 4개, 마이그레이션 CLI·버전 1·체크섬, 환경변수 이름·검증, 세션 role·Secret·풀 크기(이 문서 §3, 플랫폼 결정), lease 코드 고정.
+남음: 이미지 digest, 정리 보존 기간·삭제 조건·정리 role, 메트릭 이름·타입·라벨, 외부 생성(vLLM) 결과 불명확 시 처리, DB 장애 시 RPO(비동기 복제에서 손실 0 약속 여부), `db_pool.py` 주석의 현재 운영(rw 단일) 반영.
 외부 vLLM 추론은 앱 DB commit 과 한 트랜잭션이 아니므로 "정확히 한 번"을 플랫폼이 약속하지 않는다.
 
 ## 10. 후속 승인 순서
@@ -130,3 +155,35 @@
 앱·웹 계약 확정 → 로컬 도구 검토 → 별도 읽기 승인과 `--check` → Secret 전달 / 권한 / 마이그레이션 / 배포 각각의 변경 승인 → 정상 경로 검증 → 별도 E0 승인. E1~E5 는 앱 기능·관측·복구 계약 완료 뒤 별도 승인. `--offline` 성공만으로 apply 나 E0 실행을 권하지 않는다.
 
 CP의 `~/mafest-api-db.backup.yaml` 은 이번에 열지도 지우지도 않았다. 새 접속·권한이 적용되고 정상 동작과 복구 경로가 확인된 뒤 사용자가 정확한 경로와 보존 필요성을 검토해 따로 정리한다. 백업 파일 삭제와, 이미 노출된 자격의 회전 필요성은 별개로 판단한다.
+
+## 11. 이미지 게시 후 채울 값과 운영 적용 순서 (계획만, 아무것도 실행하지 않았다)
+
+**게시 후 채울 값** — 추측으로 채우지 않는다. 비어 있는 동안 검사기·순서 도구가 막는다.
+
+| 값 | 위치 |
+| --- | --- |
+| API 이미지 digest (`c48f578` 이후 빌드) | `kustomize/base/mafest-app/api-deployment.yaml` 이미지, `scripts/validate-mafest-app-manifests.sh` 의 `APPROVED_API_IMAGE` |
+| 마이그레이션 Job 이미지 digest (같은 API 이미지) | `drafts/migration-job.yaml.draft` 의 `0×64` 자리. 채운 뒤 `kustomize/base/mafest-load/job-session-migrate.yaml` 로 옮기고 kustomization 의 주석 한 줄을 켠 상태에서만 적용 |
+| 웹 이미지 digest (`f87c580` 빌드) | `kustomize/base/mafest-app/web-deployment.yaml`, 같은 검사기의 `APPROVED_WEB_IMAGE` |
+| 호출 상한 증명의 digest | `scripts/fault/llm-call-basis.json` — 새 digest 에서는 기존 증명이 무효이므로 다시 만든다(이번 범위 아님) |
+| 정리 CronJob 의 role·Secret·digest | 정리를 켜는 시점에 |
+
+**운영 적용 순서** (모두 사람이 승인한 뒤 한 단계씩. 모든 명령은 승인한 context 와 정확한 namespace 를 직접 적는다. 터미널 기본 context·namespace 에 의존하지 않는다.
+`<승인한-context>` 는 적용 직전에 사람이 정한 kubectl context 이름으로 바꾼다. cnpg 플러그인 명령은 `--context` 같은 전역 플래그를 플러그인 이름 **뒤**에 둔다. 플러그인 앞에 두면 kubectl 이 플러그인을 찾지 못한다):
+
+1. Secret 준비 — 값은 출력하지 않는다. 비밀번호·DSN·키는 0600 임시 파일에 두고 끝나면 지운다.
+   - `kubectl --context <승인한-context> -n mafest-data create secret generic mafest-db-session --type=kubernetes.io/basic-auth --from-literal=username=mafest_session --from-file=password=<0600 파일>`
+   - `kubectl --context <승인한-context> -n mafest-data create secret generic mafest-db-session-migrator --type=kubernetes.io/basic-auth --from-literal=username=mafest_session_migrator --from-file=password=<0600 파일>`
+   - `kubectl --context <승인한-context> -n mafest-app create secret generic mafest-api-session --from-file=PGURL_SESSION=<0600 파일> --from-file=MAFEST_SESSION_KEY=<0600 파일>` (`mafest_session` 계정 DSN, 새 난수 32바이트 이상, 두 Pod 공용)
+   - `kubectl --context <승인한-context> -n mafest-app create secret generic mafest-session-migrate-db --from-file=PGURL=<0600 파일>` (`mafest_session_migrator` 계정 DSN, 마이그레이션 Job 전용)
+2. `mafest-db` Application 에서 Cluster 한 건 선택 Sync(`argocd/README.md` 절차) 뒤 managed role 확인: `kubectl --context <승인한-context> -n mafest-data get cluster.postgresql.cnpg.io mafest-db`
+3. 역할 권한: `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_roles.sql`
+4. 사전 점검(읽기 전용): `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_precheck.sql` — `ok absent` 또는 `ok owned` 일 때만 계속한다. 그 밖이면 소유권을 바꾸지 않고 출력만 보고한다.
+5. 마이그레이션: digest 를 채운 Job 을 적용하고 결과를 확인한다.
+   - `kubectl --context <승인한-context> -n mafest-app apply -k kustomize/base/mafest-load`
+   - `kubectl --context <승인한-context> -n mafest-app wait --for=condition=complete job/mafest-session-migrate --timeout=300s`
+   - `kubectl --context <승인한-context> -n mafest-app logs job/mafest-session-migrate` (적용 출력과 `--check` 성공 확인)
+   - 확인 뒤 `kubectl --context <승인한-context> -n mafest-app delete job mafest-session-migrate` 로 Job 을 지우고 kustomization 은 다시 비운다.
+6. 유효 권한 검사(읽기 전용): `kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_check.sql` — `세션 유효 권한 검사 통과` 이고 종료 코드가 0 일 때만 계속한다.
+7. API 선택 Sync(`mafest-api` Deployment 한 건) → 두 Pod Ready 와 롤링 확인: `kubectl --context <승인한-context> -n mafest-app rollout status deployment/mafest-api`. 이어서 웹 선택 Sync. 순서 도구: `python3 scripts/mafest_deploy_order.py --offline`.
+8. 롤백은 §4.

@@ -55,10 +55,14 @@ spec:
               image: ghcr.io/persona-runtime/mafest-app@sha256:0000000000000000000000000000000000000000000000000000000000000000
               imagePullPolicy: IfNotPresent
               command:
-                - __APP_CLEANUP_CLI__
+                - python
+                - -m
+                - mafest.session.cleanup
               env:
                 # 정리 전용 role의 DSN. API runtime·owner Secret을 재사용하지 않는다(이름은 앱과 합의).
-                - name: PGURL
+                # 앱 CLI(mafest.session.cleanup)는 DSN 을 이 이름으로 읽는다. 정리 role(SELECT·DELETE)은
+                # `migrate --apply --cleanup-role` 로 권한을 주며, 활성화 때 role·Secret 을 정해 아래 자리표시를 채운다.
+                - name: PGURL_SESSION_CLEANUP
                   valueFrom:
                     secretKeyRef:
                       name: __CLEANUP_DB_SECRET__

@@ -4,5 +4,6 @@ kind: Kustomization
 # runbook(A7)에서 한 단계씩 한 줄만 켜고, 끝나면 다시 비운다(동시에 둘 이상 켜지 않는다).
 #   stage: - job-stage.yaml
 #   graph: - job-graph.yaml
+#   session-migrate: - job-session-migrate.yaml   # 이미지 게시 후 migration-job 초안을 이 이름으로 옮기고 digest를 채운다
 # Job 이미지는 승인된 릴리스 digest로 고정돼 있어도 상시 렌더에 넣지 않는다 — 적재는 runbook 단계에서만 돈다.
 resources: []

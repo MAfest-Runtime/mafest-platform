@@ -6,6 +6,10 @@
 검사 범위
 - 초안이 어떤 prod 렌더에도 들어가지 않는다(.draft 확장자 + kustomization 미연결).
 - Job/CronJob 초안마다 egress·DB ingress NetworkPolicy가 짝으로 있고, 기존 허용 라벨을 재사용하지 않는다.
+  예외는 세션 마이그레이션 Job 하나뿐이다. 적재 Job 패턴을 그대로 써서 기존 loader 정책을 의도적으로 재사용하며,
+  라벨이 정확히 mafest-loader 이고 기존 정책이 실제로 있을 때만 통과한다.
+- 세션 마이그레이션 Job은 상품 owner 계열 Secret(mafest-migrator·mafest-db-owner)이 아니라 전용 Secret만 쓴다.
+- README §11 과 db/grants 의 kubectl 명령은 --context 와 -n/--namespace 를 모두 적는다(터미널 기본값에 의존하지 않는다).
 - 정리 CronJob은 suspend이고 삭제 SQL·LIMIT 삭제를 담지 않는다.
 - 권한 템플릿은 GRANT만 쓰고 넓은 권한·DDL을 담지 않는다.
 - 기존 API 종료 시간 선언이 부등식을 지킨다(변경하지 않고 읽기만).
@@ -39,6 +43,25 @@ PROD_OVERLAYS = (
 # 기존 허용 라벨. 새 워크로드가 이 라벨을 쓰면 기존 정책이 의도치 않게 새 Pod에 적용된다.
 EXISTING_ALLOWED_LABELS = {"mafest-api", "mafest-loader"}
 DRAFT_NAME_PREFIX = "mafest-session"
+# 기존 적재 Job 라벨을 의도적으로 재사용하는 워크로드. 기존 mafest-allow-loader-egress(DNS·DB 5432)와
+# mafest-allow-db-ingress(mafest-loader 허용)가 이미 필요한 만큼만 열어 주므로 새 정책을 만들지 않는다.
+LOADER_REUSING_WORKLOADS = {"mafest-session-migrate": "mafest-loader"}
+LOADER_EGRESS_POLICY = "mafest-allow-loader-egress"
+DB_INGRESS_POLICY = "mafest-allow-db-ingress"
+# 세션 마이그레이션 Job 의 DDL 자격. 상품 owner 의 전역 기본 권한이 새 세션 테이블을 검색 계정에 열어 주므로
+# owner 계열 Secret 을 쓰지 않고 세션 전용 역할(mafest_session_migrator)의 DSN 만 쓴다.
+MIGRATION_JOB_NAME = "mafest-session-migrate"
+MIGRATION_SECRET = "mafest-session-migrate-db"
+PRODUCT_OWNER_SECRETS = ("mafest-migrator", "mafest-db-owner")
+README_OPS_HEADING = "## 11."
+CODE_SPAN = re.compile(r"`([^`]*)`")
+# 이 작업이 의도적으로 바꾸는 기존 선언. 이 밖의 kustomize·argocd·db 변경은 여전히 실패다.
+INTENDED_CHANGES = {
+    "db/grants/mafest_roles.sql",
+    "kustomize/base/mafest-app/api-deployment.yaml",
+    "kustomize/base/mafest-db/cluster.yaml",
+    "kustomize/base/mafest-load/kustomization.yaml",
+}
 PLACEHOLDER = re.compile(r"__[A-Z0-9_]+__")
 ZERO_DIGEST = re.compile(r"@sha256:0{64}\b")
 # 비밀 형태: URL 안의 user:password@, `password:` 뒤 값, 긴 base64 덩어리.
@@ -49,9 +72,6 @@ SECRET_PATTERNS = (
 )
 # 부등식에 쓰는 기존 선언의 위치. 값은 매니페스트에서 읽는다.
 API_DEPLOYMENT = REPO / "kustomize/base/mafest-app/api-deployment.yaml"
-# 합의 전 후보값. 장애 감지 보장이 아니라 "여유를 둔 설정인가"만 본다.
-CANDIDATE_RENEW_S = 10
-CANDIDATE_LEASE_TTL_S = 30
 
 failures: list[str] = []
 notes: list[str] = []
@@ -113,6 +133,103 @@ def pod_spec(document: dict) -> dict:
     return template["spec"]
 
 
+def secret_refs(document: dict) -> set[str]:
+    """워크로드 Pod 가 환경변수로 참조하는 Secret 이름들(secretKeyRef·envFrom)."""
+    names: set[str] = set()
+    for container in pod_spec(document).get("containers", []):
+        for item in container.get("env", []):
+            reference = (item.get("valueFrom") or {}).get("secretKeyRef")
+            if reference:
+                names.add(reference["name"])
+        for source in container.get("envFrom", []):
+            if "secretRef" in source:
+                names.add(source["secretRef"]["name"])
+    return names
+
+
+def check_migration_credentials(documents: list[dict]) -> None:
+    """마이그레이션 Job 은 상품 owner 계열 Secret 을 쓰지 않고 세션 전용 Secret 을 쓴다."""
+    jobs = [
+        d
+        for d in documents
+        if d["kind"] == "Job" and d["metadata"]["name"] == MIGRATION_JOB_NAME
+    ]
+    if not jobs:
+        fail(f"[구성] {MIGRATION_JOB_NAME} Job 초안이 없다")
+        return
+    references = secret_refs(jobs[0])
+    for forbidden in PRODUCT_OWNER_SECRETS:
+        if forbidden in references:
+            fail(
+                f"[권한] {MIGRATION_JOB_NAME}: 상품 owner 계열 Secret {forbidden} 을 쓴다 — "
+                "owner 의 전역 기본 권한이 새 세션 테이블을 검색 계정에 연다"
+            )
+    if MIGRATION_SECRET not in references:
+        fail(
+            f"[권한] {MIGRATION_JOB_NAME}: 세션 전용 Secret {MIGRATION_SECRET} 을 쓰지 않는다"
+        )
+
+
+def check_ops_commands() -> None:
+    """운영 kubectl 명령은 --context 와 -n/--namespace 를 직접 적는다. README §11 코드 조각과 db/grants 주석을 본다."""
+    sources: list[tuple[str, str, bool]] = []
+    readme = REPO / "deploy/mafest-multiturn/README.md"
+    if readme.exists():
+        text = readme.read_text(encoding="utf-8")
+        if README_OPS_HEADING in text:
+            sources.append(("README §11", text[text.index(README_OPS_HEADING) :], True))
+    for path in sorted((REPO / "db/grants").glob("*.sql")):
+        sources.append(
+            (str(path.relative_to(REPO)), path.read_text(encoding="utf-8"), False)
+        )
+    for label, body, markdown in sources:
+        for number, line in enumerate(body.splitlines(), 1):
+            commands = (
+                [span for span in CODE_SPAN.findall(line) if "kubectl" in span]
+                if markdown
+                else ([line] if "kubectl" in line else [])
+            )
+            for command in commands:
+                has_context = re.search(r"--context[ =]\S+", command)
+                has_namespace = re.search(r"(?:^|\s)(?:-n|--namespace)[ =]\S+", command)
+                if not (has_context and has_namespace):
+                    fail(
+                        f"[명령] {label}:{number} kubectl 명령에 --context 와 -n/--namespace 가 모두 있어야 한다"
+                    )
+
+
+def loader_policies_exist() -> bool:
+    """기존 loader egress 정책(DNS·DB 5432)과 DB ingress 정책(mafest-loader 허용)이 선언돼 있는가."""
+    found: dict[str, dict] = {}
+    for path in REPO.glob("kustomize/base/networkpolicy/mafest-*/network-policy.yaml"):
+        for document in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+            if document and document.get("kind") == "NetworkPolicy":
+                found[document["metadata"]["name"]] = document
+    egress = found.get(LOADER_EGRESS_POLICY)
+    ingress = found.get(DB_INGRESS_POLICY)
+    if egress is None or ingress is None:
+        return False
+    selects_loader = (
+        egress["spec"]
+        .get("podSelector", {})
+        .get("matchLabels", {})
+        .get("app.kubernetes.io/name")
+        == "mafest-loader"
+    )
+    ports = {
+        (port.get("protocol"), port.get("port"))
+        for rule in egress["spec"].get("egress", [])
+        for port in rule.get("ports", [])
+    }
+    allows_loader = any(
+        peer.get("podSelector", {}).get("matchLabels", {}).get("app.kubernetes.io/name")
+        == "mafest-loader"
+        for rule in ingress["spec"].get("ingress", [])
+        for peer in rule.get("from", [])
+    )
+    return selects_loader and ("TCP", 5432) in ports and allows_loader
+
+
 def check_workloads_and_policies(documents: list[dict]) -> None:
     workloads = [d for d in documents if d["kind"] in ("Job", "CronJob")]
     policies = [d for d in documents if d["kind"] == "NetworkPolicy"]
@@ -122,8 +239,13 @@ def check_workloads_and_policies(documents: list[dict]) -> None:
         name = workload["metadata"]["name"]
         label = pod_labels(workload)["app.kubernetes.io/name"]
         spec = pod_spec(workload)
-        if label in EXISTING_ALLOWED_LABELS:
+        reused_label = LOADER_REUSING_WORKLOADS.get(name)
+        if reused_label is None and label in EXISTING_ALLOWED_LABELS:
             fail(f"[안전] {name}: 기존 허용 라벨 {label} 을 재사용한다")
+        if reused_label is not None and label != reused_label:
+            fail(
+                f"[안전] {name}: 기존 loader 정책을 재사용하려면 라벨이 {reused_label} 이어야 한다(실제 {label})"
+            )
         if spec.get("automountServiceAccountToken") is not False:
             fail(f"[안전] {name}: API 토큰 자동 마운트를 끄지 않았다")
         context = spec.get("securityContext", {})
@@ -143,6 +265,13 @@ def check_workloads_and_policies(documents: list[dict]) -> None:
         ):
             fail(f"[안전] {name}: 정리 CronJob 초안이 suspend 가 아니다")
 
+        if reused_label is not None:
+            # 새 정책을 만들지 않는 대신 기존 정책이 실제로 있고 loader 를 허용하는지 확인한다.
+            if not loader_policies_exist():
+                fail(
+                    f"[짝] {name}: 재사용할 기존 정책({LOADER_EGRESS_POLICY}, {DB_INGRESS_POLICY})을 찾지 못했다"
+                )
+            continue
         selects = [
             p
             for p in policies
@@ -247,11 +376,9 @@ def check_timing_budget() -> None:
         fail(
             f"[종료] preStop({pre_stop}) + graceful({graceful}) < 유예({grace}) 가 깨졌다"
         )
-    if not 2 * CANDIDATE_RENEW_S < CANDIDATE_LEASE_TTL_S:
-        fail("[lease] 후보 갱신 주기×2 가 lease TTL 이상이다")
     notes.append(
         f"종료 선언: LLM {llm} < 요청 {request} < graceful {graceful}, preStop {pre_stop}+{graceful} < 유예 {grace}. "
-        f"lease 후보 {CANDIDATE_RENEW_S}×2 < {CANDIDATE_LEASE_TTL_S} 은 여유 조건일 뿐 감지 보장이 아니다."
+        "세션 lease 는 앱 코드가 정한다(요청 시한 + 10초). 선언에서 따로 두지 않는다."
     )
 
 
@@ -266,6 +393,10 @@ def check_no_secret_shapes() -> None:
             continue  # 이 파일은 패턴 정의 자체를 담는다
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             scrubbed = re.sub(r"sha256:[0-9a-f]{64}", "", line)
+            # 쿠버네티스 필드 이름(긴 영문 한 단어)이 긴 base64 형태 검사에 걸리지 않게 한다.
+            scrubbed = scrubbed.replace(
+                "requiredDuringSchedulingIgnoredDuringExecution", ""
+            )
             for pattern in SECRET_PATTERNS:
                 if pattern.search(scrubbed):
                     fail(
@@ -317,7 +448,7 @@ def check_kubectl_single_gateway() -> None:
 
 
 def check_unchanged_runtime_paths() -> None:
-    """기존 배포·정책·권한 파일을 이 작업이 바꾸지 않았다."""
+    """이 작업이 의도적으로 바꾸는 파일(INTENDED_CHANGES) 밖의 기존 배포·정책·권한 파일을 바꾸지 않았다."""
     diff = subprocess.run(
         ["git", "diff", "--name-only", "HEAD", "--", "kustomize", "argocd", "db"],
         cwd=REPO,
@@ -325,7 +456,11 @@ def check_unchanged_runtime_paths() -> None:
         text=True,
         check=False,
     )
-    changed = [line for line in diff.stdout.splitlines() if line]
+    changed = [
+        line
+        for line in diff.stdout.splitlines()
+        if line and line not in INTENDED_CHANGES
+    ]
     if changed:
         fail(f"[범위] 기존 선언이 바뀌었다: {', '.join(changed)}")
 
@@ -381,6 +516,8 @@ def main() -> int:
     documents = load_drafts()
     check_not_rendered()
     check_workloads_and_policies(documents)
+    check_migration_credentials(documents)
+    check_ops_commands()
     check_cleanup_has_no_delete_sql(documents)
     check_grants_template()
     check_timing_budget()

@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mafest_deploy_order import (
     JOB_COMPLETE,
     JOB_FAILED,
+    SCHEMA_ABSENT,
+    SCHEMA_OWNED_OK,
     DeployInputs,
     Runner,
     run_sequence,
@@ -36,15 +38,27 @@ class Recorder:
     """호출 기록을 남기는 가짜 실행기."""
 
     def __init__(
-        self, job_state: str = JOB_COMPLETE, applied: str | None = "v-test-1"
+        self,
+        job_state: str = JOB_COMPLETE,
+        applied: str | None = "v-test-1",
+        schema_state: str | None = SCHEMA_ABSENT,
+        privileges_ok: bool | None = True,
     ) -> None:
         self.calls: list[str] = []
         self.sync_arguments: list[str] = []
         self._job_state = job_state
         self._applied = applied
+        self._schema_state = schema_state
+        self._privileges_ok = privileges_ok
 
     def runner(self) -> Runner:
         return Runner(
+            read_schema_state=lambda: (
+                self.calls.append("precheck") or self._schema_state
+            ),
+            check_effective_privileges=lambda: (
+                self.calls.append("check_privileges") or self._privileges_ok
+            ),
             create_job=lambda manifest: self.calls.append("create_job"),
             job_state=lambda: self.calls.append("job_state") or self._job_state,
             read_applied_version=lambda: (
@@ -92,11 +106,45 @@ class DeployOrderTest(unittest.TestCase):
         self.assertNotIn("sync_api", recorder.calls)
         self.assertFalse(outcome.synced)
 
+    def test_existing_schema_in_unexpected_state_creates_no_job(self) -> None:
+        # 다른 소유자 등 기대와 다른 상태: 소유권을 바꾸지 않고 Job 도 만들지 않는다.
+        recorder = Recorder(schema_state="foreign_owner")
+        outcome = run_sequence(make_inputs(), recorder.runner())
+        self.assertEqual(recorder.calls, ["precheck"])
+        self.assertIn("소유권을 바꾸지 않고", outcome.stopped_reason or "")
+
+    def test_unreadable_schema_state_creates_no_job(self) -> None:
+        recorder = Recorder(schema_state=None)
+        run_sequence(make_inputs(), recorder.runner())
+        self.assertEqual(recorder.calls, ["precheck"])
+
+    def test_schema_already_owned_by_the_migration_role_may_rerun(self) -> None:
+        recorder = Recorder(schema_state=SCHEMA_OWNED_OK)
+        outcome = run_sequence(make_inputs(), recorder.runner())
+        self.assertIn("create_job", recorder.calls)
+        self.assertTrue(outcome.synced)
+
+    def test_failed_or_unreadable_privilege_check_does_not_request_sync(self) -> None:
+        for result in (False, None):
+            with self.subTest(result=result):
+                recorder = Recorder(privileges_ok=result)
+                outcome = run_sequence(make_inputs(), recorder.runner())
+                self.assertNotIn("sync_api", recorder.calls)
+                self.assertFalse(outcome.synced)
+
     def test_success_syncs_only_api_once_after_all_checks(self) -> None:
         recorder = Recorder()
         outcome = run_sequence(make_inputs(), recorder.runner())
         self.assertEqual(
-            recorder.calls, ["create_job", "job_state", "read_version", "sync_api"]
+            recorder.calls,
+            [
+                "precheck",
+                "create_job",
+                "job_state",
+                "read_version",
+                "check_privileges",
+                "sync_api",
+            ],
         )
         self.assertEqual(
             recorder.sync_arguments, ["apps:Deployment:mafest-app/mafest-api"]

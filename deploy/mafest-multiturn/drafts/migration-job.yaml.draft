@@ -1,36 +1,45 @@
-# [초안·비활성] 멀티턴 세션 테이블 마이그레이션 Job 템플릿.
+# [게시 후 digest만 채우면 되는 초안] 멀티턴 세션 테이블 마이그레이션 Job.
 #
-# 이 파일은 kustomization에 연결하지 않았고 확장자가 .draft라 어떤 렌더에도 들어가지 않는다.
-# 아래 __ 로 시작하는 값은 앱 지시서가 확정해야 채울 수 있다. 값이 남아 있으면
-# scripts/check-mafest-multiturn-prep.sh 가 "준비 미완료"로 보고한다. 존재하지 않는 이미지·명령을
-# 실행 가능한 예로 쓰지 않기 위해 일부러 자리표시 문자열을 둔다.
+# 이 파일은 kustomization에 연결하지 않았고 확장자가 .draft라 어떤 렌더에도 들어가지 않는다. 남은 자리표시는 이미지
+# digest 하나뿐이다(0×64). 앱 이미지를 게시한 뒤 실제 digest로 바꾸고, 이 파일을 kustomize/base/mafest-load/
+# job-session-migrate.yaml 로 옮겨 kustomization.yaml 의 주석 한 줄을 켠 상태에서 사람이 적용한다(apply는 아직 하지 않는다).
+# digest를 추측으로 채우지 않는다. 0×64가 남아 있으면 scripts/check_mafest_multiturn_prep.py 와
+# scripts/mafest_deploy_order.py 가 "준비 미완료"로 막는다.
 #
-# 왜 mafest-data에 두는가: owner Secret(mafest-db-owner)이 이 namespace에 있어 다른 namespace로 복사하지 않아도 된다.
-# 전제(미확인): 비공개 이미지 pull Secret(mafest-ghcr)이 mafest-data에도 있어야 한다. 없으면 사람이 만들어야 하며
-# 이 저장소는 값을 다루지 않는다.
+# 기존 적재 Job 패턴을 그대로 쓴다: mafest-app 네임스페이스, 라벨 app.kubernetes.io/name=mafest-loader.
+# 그래서 새 NetworkPolicy가 필요 없다 — 기존 mafest-allow-loader-egress(DNS·DB 5432)와 mafest-allow-db-ingress가 이미 연다.
 #
-# 실행 방식: Argo hook이 아니다. 선택 Sync는 hook을 실행하지 않으므로, 사람이 이 Job을 따로 만들고
-# 완료·마이그레이션 버전을 확인한 뒤에만 API 선택 Sync를 요청한다(deploy/mafest-multiturn/README.md §배포 순서).
+# DDL 자격: 세션 전용 역할 mafest_session_migrator 의 DSN 을 담은 Secret mafest-session-migrate-db(키 PGURL)다.
+# 적재 Job 의 mafest-migrator(mafest_owner)를 쓰지 않는다 — owner 의 전역 기본 권한이 새 세션 테이블을 검색 계정
+# (mafest_runtime)에 읽게 열어 주기 때문이다. API 에도 이 Secret 을 연결하지 않는다.
+# 앱 CLI는 DSN을 인자가 아니라 Secret 이름으로 읽는다(기본 PGURL_SESSION_MIGRATE → 환경변수 우선).
+#
+# 실행 방식: Argo hook이 아니다. 선택 Sync는 hook을 실행하지 않으므로 사람이 이 Job을 만들고, 완료와 버전을 확인한 뒤에만
+# API 선택 Sync를 요청한다(deploy/mafest-multiturn/README.md §배포 순서).
+#
+# 명령 설명: `--apply --app-role mafest_session` 은 스키마 mafest_confirm 을 만들고(checksum 대조, advisory lock으로 직렬화)
+# 세션 API 역할 mafest_session 에 APP_GRANTS(스키마 USAGE, 3개 테이블 SELECT/INSERT/UPDATE, schema_migrations SELECT)만 준다.
+# 역할은 만들지 않는다 — managed role이 먼저 있어야 한다. 이어서 `--check` 가 모든 버전이 적용됐는지(종료 코드 0) 확인한다.
+# `--check` 는 권한 부여를 검증하지 않으므로, 권한은 --apply 출력과 DB 쪽 확인으로 따로 본다.
+# 기대 버전은 1(initial), 체크섬은 sha256:2ff88fce82b07dc8d1da8ad4731ecf3d803f34b7492cf833b6b99f9fc5257f42 다.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: mafest-session-migrate
-  namespace: mafest-data
   labels:
-    app.kubernetes.io/name: mafest-session-migrate
-    app.kubernetes.io/component: migration
+    app.kubernetes.io/name: mafest-loader
+    app.kubernetes.io/component: session-migrate
     app.kubernetes.io/part-of: persona-platform
 spec:
-  # 실패해도 다시 돌리지 않는다. 부분 적용된 DDL을 자동 재시도하면 상태를 알기 어렵다.
+  # 실패해도 다시 돌리지 않는다. 부분 적용된 DDL을 자동 재시도하면 상태를 알기 어렵다(CLI는 멱등이지만 사람이 본다).
   backoffLimit: 0
   activeDeadlineSeconds: 300
   # 실패한 Pod의 로그를 사람이 볼 수 있도록 자동 삭제 시한을 두지 않는다(성공 Job은 사람이 지운다).
   template:
     metadata:
       labels:
-        # 아래 NetworkPolicy 초안이 이 라벨로만 DB 5432를 연다. mafest-loader·mafest-api 라벨을 재사용하지 않는다.
-        app.kubernetes.io/name: mafest-session-migrate
-        app.kubernetes.io/component: migration
+        app.kubernetes.io/name: mafest-loader
+        app.kubernetes.io/component: session-migrate
         app.kubernetes.io/part-of: persona-platform
     spec:
       restartPolicy: Never
@@ -42,25 +51,38 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - k8s-worker1
+                      - k8s-worker2
       containers:
         - name: migrate
-          # 앱이 발행하는 마이그레이션 포함 이미지의 digest. 태그로 고정하지 않는다.
+          # 게시 후 채울 값: 세션 마이그레이션 CLI(mafest.session.migrate)가 들어 있는 API 이미지의 digest.
           image: ghcr.io/persona-runtime/mafest-app@sha256:0000000000000000000000000000000000000000000000000000000000000000
           imagePullPolicy: IfNotPresent
           command:
-            - __APP_MIGRATION_CLI__
+            - sh
+            - -c
+            - >-
+              set -e;
+              python -m mafest.session.migrate --apply --app-role mafest_session;
+              python -m mafest.session.migrate --check
           env:
-            # owner DSN. API 컨테이너에는 이 Secret을 연결하지 않는다.
-            - name: PGURL
+            # 세션 스키마 전용 DDL 자격(mafest_session_migrator). API 컨테이너·상품 owner 자격과 섞지 않는다.
+            - name: PGURL_SESSION_MIGRATE
               valueFrom:
                 secretKeyRef:
-                  name: mafest-db-owner
-                  key: __OWNER_DSN_KEY__
-            # 앱이 "이 버전까지 적용됐다"를 확인할 때 쓰는 기대 버전. 값은 앱 지시서가 정한다.
-            - name: MAFEST_EXPECTED_MIGRATION_VERSION
-              value: __APP_MIGRATION_VERSION__
+                  name: mafest-session-migrate-db
+                  key: PGURL
           resources:
             requests:
               cpu: 100m
@@ -73,3 +95,10 @@ spec:
             capabilities:
               drop:
                 - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

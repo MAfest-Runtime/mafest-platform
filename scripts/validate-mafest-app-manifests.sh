@@ -137,17 +137,39 @@ raise "[안전] mafest-app base에 Secret을 두지 않는다(사람이 Git 밖�
     "MAFEST_DB_POOL_MAX" => "4",
     "MAFEST_GRAPH_POOL_MAX" => "2",
     "MAFEST_DATA_BASE_DATE" => "2026-08-21",
+    # 멀티턴 확인 질문 초기 활성화(앱 Settings: 정확히 "1"/"0"만 켬/끔). 요약·제안·재시도는 첫 배포에서 끈다.
+    "MAFEST_LLM_INTENT" => "1",
+    "MAFEST_LLM_STRUCTURED" => "1",
+    "MAFEST_LLM_RETRIES" => "0",
+    "MAFEST_LLM_SUMMARY" => "0",
+    "MAFEST_LLM_SUGGEST" => "0",
+    "MAFEST_SESSION_POOL_MAX" => "2",
   }
   expected_values.each do |name, value|
     raise "[안전] (#{label}) API 환경변수 #{name}는 #{value.inspect}여야 한다(실제 #{env.dig(name, "value").inspect})" unless env.dig(name, "value") == value
   end
   # mafest Settings.from_env()가 읽는 이름만 쓴다. 지어낸 이름은 조용히 무시돼 기본값으로 돈다.
-  allowed = expected_values.keys + %w[PGURL]
+  allowed = expected_values.keys + %w[PGURL PGURL_SESSION MAFEST_SESSION_KEY]
   unknown = env.keys - allowed
   raise "[안전] (#{label}) API에 Settings가 읽지 않는 환경변수가 있다: #{unknown.join(", ")}" unless unknown.empty?
   pgurl = env["PGURL"] || raise("[안전] (#{label}) API에 PGURL이 없다")
   raise "[안전] (#{label}) API DSN은 mafest-app Secret mafest-api-db의 PGURL(runtime 계정)이다" unless pgurl.dig("valueFrom", "secretKeyRef") == { "name" => "mafest-api-db", "key" => "PGURL" }
+  # 세션 저장소 접속·서버 키: 같은 Secret(mafest-api-session)의 정해진 키만. 두 Pod가 같은 서버 키를 쓰려면 한 Secret이어야 한다.
+  { "PGURL_SESSION" => "PGURL_SESSION", "MAFEST_SESSION_KEY" => "MAFEST_SESSION_KEY" }.each do |name, key|
+    ref = env[name] || raise("[안전] (#{label}) API에 #{name}이 없다 — 없으면 앱이 기동하지 못한다")
+    raise "[안전] (#{label}) #{name}은 mafest-app Secret mafest-api-session의 #{key}다" unless ref.dig("valueFrom", "secretKeyRef") == { "name" => "mafest-api-session", "key" => key }
+  end
+  # API에는 DDL(owner·마이그레이션) 자격을 넣지 않는다. 세션 마이그레이션 DSN 이름도 API에 두지 않는다.
   raise "[안전] (#{label}) API에 owner용 mafest-migrator를 연결하지 않는다" if YAML.dump(api).include?("mafest-migrator")
+  %w[mafest-db-owner PGURL_SESSION_MIGRATE PGURL_SESSION_CLEANUP mafest-session-migrate-db mafest-db-session-migrator mafest_session_migrator].each do |forbidden|
+    raise "[안전] (#{label}) API에 #{forbidden}를 연결하지 않는다(DDL·정리 자격은 API 몫이 아니다)" if YAML.dump(api).include?(forbidden)
+  end
+  # 롤링 중 DB 연결 예산: (replicas + maxSurge) × (검색 풀 + AGE 풀 + 세션 풀). 나머지 절반은 적재 Job·exporter·운영 접속용으로 남긴다.
+  cluster_file = File.join(repo, "kustomize/base/mafest-db/cluster.yaml")
+  max_connections = YAML.load_stream(File.read(cluster_file)).compact.first.dig("spec", "postgresql", "parameters", "max_connections").to_i
+  pods = api.dig("spec", "replicas") + api.dig("spec", "strategy", "rollingUpdate", "maxSurge")
+  per_pod = %w[MAFEST_DB_POOL_MAX MAFEST_GRAPH_POOL_MAX MAFEST_SESSION_POOL_MAX].sum { |name| env.dig(name, "value").to_i }
+  raise "[안전] (#{label}) 롤링 중 API 연결 #{pods * per_pod}개가 max_connections #{max_connections}의 절반을 넘는다" if max_connections <= 0 || pods * per_pod * 2 > max_connections
   raise "[안전] (#{label}) API에 envFrom을 쓰지 않는다 — 어떤 Secret 키가 들어가는지 선언에서 보이지 않는다" if c.key?("envFrom")
 
   res = c["resources"] || {}

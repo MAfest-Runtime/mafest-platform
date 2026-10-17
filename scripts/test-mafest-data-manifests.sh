@@ -26,6 +26,8 @@ LOAD_K = "kustomize/base/mafest-load/kustomization.yaml"
 DB_K = "kustomize/base/mafest-db/kustomization.yaml"
 NETPOL = "kustomize/base/networkpolicy/mafest-data/network-policy.yaml"
 ROLES = "db/grants/mafest_roles.sql"
+SESSION_CHECK = "db/grants/mafest_session_check.sql"
+SESSION_PRECHECK = "db/grants/mafest_session_precheck.sql"
 POD = ["spec", "template", "spec"]
 C0 = POD + ["containers", 0]
 
@@ -53,6 +55,12 @@ cases = [
   ["locale 변경", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "bootstrap", "initdb", "localeCType"], "en_US.UTF-8") }, "locale은 C"],
   ["superuser 활성화", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "enableSuperuserAccess"], true) }, "superuser 계정을 활성화하지"],
   ["이미지 태그만", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "imageName"], "ghcr.io/persona-runtime/mafest-postgres:16.15-age1.6.0-bookworm") }, "digest 고정이 아니다"],
+  ["세션 역할 누락", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "managed", "roles"], [YAML.load_stream(File.read(File.join(r, CLUSTER))).compact.first.dig("spec", "managed", "roles", 0)]) }, "mafest_session은 managed.roles"],
+  ["세션 역할에 superuser", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "managed", "roles", 1, "superuser"], true) }, "mafest_session에 superuser"],
+  ["세션 역할 비밀번호 Secret 변경", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "managed", "roles", 1, "passwordSecret", "name"], "mafest-db-runtime") }, "mafest_session은 managed.roles"],
+  ["마이그레이션 역할 누락", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "managed", "roles"], YAML.load_stream(File.read(File.join(r, CLUSTER))).compact.first.dig("spec", "managed", "roles").first(2)) }, "mafest_session_migrator는 managed.roles"],
+  ["마이그레이션 역할에 superuser", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "managed", "roles", 2, "superuser"], true) }, "mafest_session_migrator에 superuser"],
+  ["마이그레이션 역할 비밀번호 Secret이 세션과 같음", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "managed", "roles", 2, "passwordSecret", "name"], "mafest-db-session") }, "mafest_session_migrator는 managed.roles"],
   ["runtime 역할에 superuser", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "managed", "roles", 0, "superuser"], true) }, "mafest_runtime에 superuser"],
   # 자리표시자 digest가 prod 렌더에 연결됨
   ["자리표시자 Cluster 이미지", ->(r) { mutate_yaml(File.join(r, CLUSTER), ["spec", "imageName"], "ghcr.io/persona-runtime/mafest-postgres:16.15-age1.6.0-bookworm@sha256:#{"0" * 64}") }, "자리표시자 digest(0×64)"],
@@ -90,6 +98,14 @@ cases = [
   ["Application finalizer", ->(r) { mutate_yaml(File.join(r, "argocd/mafest-db-netpol.yaml"), ["metadata", "finalizers"], ["resources-finalizer.argocd.argoproj.io"]) }, "finalizers를 두지 않는다"],
   # 권한 SQL
   ["runtime INSERT 권한", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)) + "\nGRANT INSERT ON ALL TABLES IN SCHEMA public TO mafest_runtime;\n") }, "쓰기 권한"],
+  ["세션 역할 CONNECT 누락", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)).sub("GRANT CONNECT ON DATABASE mafest TO mafest_session;", "")) }, "mafest_session은 DB CONNECT"],
+  ["세션 역할 테이블 권한을 SQL로", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)) + "\nGRANT SELECT ON ALL TABLES IN SCHEMA mafest_confirm TO mafest_session;\n") }, "마이그레이션 CLI --app-role"],
+  ["마이그레이션 역할 CREATE 누락", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)).sub("GRANT CONNECT, CREATE ON DATABASE mafest TO mafest_session_migrator;", "")) }, "DB CONNECT·CREATE만"],
+  ["마이그레이션 역할에 기본 권한", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)) + "\nALTER DEFAULT PRIVILEGES FOR ROLE mafest_session_migrator GRANT SELECT ON TABLES TO mafest_runtime;\n") }, "ALTER DEFAULT PRIVILEGES를 두지 않는다"],
+  ["owner 로 세션 스키마 생성", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)) + "\nCREATE SCHEMA IF NOT EXISTS mafest_confirm AUTHORIZATION mafest_owner;\n") }, "owner 로 세션 스키마를 만들지 않는다"],
+  ["유효 권한 SQL에서 runtime 격리 검사 삭제", ->(r) { File.write(File.join(r, SESSION_CHECK), File.read(File.join(r, SESSION_CHECK)).gsub("isolated-schema", "x-schema")) }, "isolated-schema 검사가 없다"],
+  ["유효 권한 SQL에서 ROLLBACK 삭제", ->(r) { File.write(File.join(r, SESSION_CHECK), File.read(File.join(r, SESSION_CHECK)).gsub("ROLLBACK;", "COMMIT;")) }, "BEGIN READ ONLY와 ROLLBACK"],
+  ["사전 점검 SQL에 소유권 변경", ->(r) { File.write(File.join(r, SESSION_PRECHECK), File.read(File.join(r, SESSION_PRECHECK)).sub("ROLLBACK;", "ALTER SCHEMA mafest_confirm OWNER TO mafest_session_migrator;\nROLLBACK;")) }, "변경문"],
   ["exporter CONNECT 누락", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)).sub(", cnpg_metrics_exporter;", ";")) }, "cnpg_metrics_exporter CONNECT"],
   ["ag_catalog USAGE 누락", ->(r) { File.write(File.join(r, ROLES), File.read(File.join(r, ROLES)).sub("GRANT USAGE ON SCHEMA ag_catalog TO mafest_owner, mafest_runtime;", "")) }, "ag_catalog USAGE"],
 ]
