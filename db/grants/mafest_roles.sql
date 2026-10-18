@@ -2,7 +2,8 @@
 -- → 적재 → 기존 객체 GRANT 보정). 이 파일은 그중 "적재 전" 부분이다. 멱등이다.
 --
 -- 누가·어디서: Cluster mafest-db가 2/2로 뜬 뒤 superuser로 한 번 실행한다(runbooks/mafest-data, A7).
---   kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_roles.sql
+--   kubectl --context <승인한-context> -n mafest-data exec -i "$PRIMARY" -- psql -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_roles.sql
+--   (PRIMARY 는 cnpg.io/instanceRole=primary 라벨의 Pod 이름이다. 운영 서버에는 cnpg 플러그인이 없어 exec 로 실행한다.)
 --   ag_catalog는 확장(age)을 만든 superuser가 소유해서 owner(mafest_owner)는 여기에 GRANT를 줄 수 없다.
 --   ALTER ROLE ... SET도 superuser·CREATEROLE 권한이 필요하다.
 --

@@ -15,7 +15,7 @@
 # 앱 CLI는 DSN을 인자가 아니라 Secret 이름으로 읽는다(기본 PGURL_SESSION_MIGRATE → 환경변수 우선).
 #
 # 실행 방식: Argo hook이 아니다. 선택 Sync는 hook을 실행하지 않으므로 사람이 이 Job을 만들고, 완료와 버전을 확인한 뒤에만
-# API 선택 Sync를 요청한다(ops-lab의 repos/persona-platform/runbooks/mafest-multiturn/README.md §배포 순서).
+# API 선택 Sync를 요청한다(ops-lab의 repos/persona-platform/runbooks/mafest-multiturn/README.md 의 운영 적용 순서).
 #
 # 명령 설명: `--apply --app-role mafest_session` 은 스키마 mafest_confirm 을 만들고(checksum 대조, advisory lock으로 직렬화)
 # 세션 API 역할 mafest_session 에 APP_GRANTS(스키마 USAGE, 3개 테이블 SELECT/INSERT/UPDATE, schema_migrations SELECT)만 준다.

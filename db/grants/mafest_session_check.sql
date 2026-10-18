@@ -1,6 +1,7 @@
 -- 세션 스키마(mafest_confirm)의 마이그레이션 후 "유효 권한" 확인. 읽기 전용이며 아무것도 바꾸지 않는다.
 --
---   kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_check.sql
+--   kubectl --context <승인한-context> -n mafest-data exec -i "$PRIMARY" -- psql -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_check.sql
+--   (PRIMARY 는 cnpg.io/instanceRole=primary 라벨의 Pod 이름이다. 운영 서버에는 cnpg 플러그인이 없어 exec 로 실행한다.)
 --
 -- 판정은 ACL 문자열이 아니라 has_*_privilege 로 한다. 이 함수들은 역할 상속·멤버십과 PUBLIC 권한을 모두 반영한 실제 유효 권한을 돌려준다.
 -- 그래서 owner 의 기본 권한, PUBLIC, 다른 역할 상속을 통해 새는 접근도 잡는다. 추가로 PUBLIC ACL(aclexplode)·역할 멤버십·

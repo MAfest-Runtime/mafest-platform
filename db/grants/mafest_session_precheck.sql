@@ -1,6 +1,7 @@
 -- 세션 스키마(mafest_confirm) 마이그레이션 전 사전 점검. 읽기 전용이며 아무것도 바꾸지 않는다.
 --
---   kubectl cnpg psql mafest-db --context <승인한-context> -n mafest-data -- -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_precheck.sql
+--   kubectl --context <승인한-context> -n mafest-data exec -i "$PRIMARY" -- psql -d mafest -v ON_ERROR_STOP=1 -f - < db/grants/mafest_session_precheck.sql
+--   (PRIMARY 는 cnpg.io/instanceRole=primary 라벨의 Pod 이름이다. 운영 서버에는 cnpg 플러그인이 없어 exec 로 실행한다.)
 --
 -- 왜 필요한가: 마이그레이션 CLI 는 `CREATE SCHEMA IF NOT EXISTS` 를 쓰므로, 스키마가 이미 다른 소유자로 있으면 조용히 이어 가다가
 -- 어디서 실패할지 알 수 없다. 이 점검이 먼저 상태(소유자·객체 소유자·검색 계정/PUBLIC 접근)를 보고하고, 기대와 다르면 예외로 멈춘다.
