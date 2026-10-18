@@ -72,16 +72,6 @@ sh scripts/validate-public-gateway-manifests.sh
 sh scripts/test-public-gateway-manifests.sh
 sh scripts/validate-networkpolicy-manifests.sh
 sh scripts/test-networkpolicy-manifests.sh
-# mafest 데이터 층(DB draft·PodMonitor·적재 Job·Application·권한 SQL)과 그 음성 테스트
-sh scripts/validate-mafest-data-manifests.sh
-sh scripts/test-mafest-data-manifests.sh
-# mafest API·웹(M6 초안: 배치·probe·Secret·환경변수·자리표시 digest·M8 라우트 초안)과 그 음성 테스트
-sh scripts/validate-mafest-app-manifests.sh
-sh scripts/test-mafest-app-manifests.sh
-# M3 vLLM 예산 측정 스크립트를 가짜 kubectl·가짜 vLLM으로 확인한다(실측은 사람이 CP에서).
-bash scripts/test-vllm-budget.sh
-# 본문 생성기(맥, mafest checkout 필요): MAFEST_REPO·MAFEST_PYTHON 이 없으면 건너뜀으로 끝난다.
-bash scripts/test-vllm-budget-prompts.sh
 bash scripts/argo-preflight.sh --self-test
 # persona 폐기 인벤토리(읽기 전용, CP에서 실행) 스크립트를 가짜 kubectl로 확인한다.
 bash scripts/test-inventory-persona-retire.sh
@@ -91,6 +81,13 @@ sh scripts/validate-monitoring-manifests.sh
 sh scripts/validate-mem-lab-declarations.sh
 # 위 검사와 terraform test가 실제로 결함을 잡는지 복사본에 결함을 넣어 확인한다(terraform 필요).
 sh scripts/test-mem-lab-negative.sh
+```
+
+mafest 데이터·앱 선언, vLLM·모델 cache 선언의 검증기와 음성 테스트, 멀티턴 준비 검사기, 장애 시험·측정 도구, 멀티턴 런북은
+persona-ops-lab의 `repos/persona-platform/`에 있다. 이 저장소 checkout을 `--source`로 지정해 실행한다.
+
+```sh
+sh <persona-ops-lab>/repos/persona-platform/run.sh --source .
 ```
 
 렌더·정책 검사 성공은 실제 스케줄링, 무중단 배포, 메트릭 수집 성공의 증거가 아니다.
