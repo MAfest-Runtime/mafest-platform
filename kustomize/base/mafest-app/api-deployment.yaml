@@ -2,7 +2,7 @@
 # 모두 아래 containerPort 8000 하나에서 제공한다(mafest Dockerfile CMD: uvicorn … --port 8000 --workers 1).
 #
 # 승인된 이미지 digest·설정으로 prod overlay(kustomize/overlays/prod/mafest-app)에 연결돼 있다. 값은 승인 입력이며
-# scripts/validate-mafest-app-manifests.sh가 승인값과 다르면 실패한다.
+# ops-lab의 repos/persona-platform/tools/validate-mafest-app-manifests.sh가 승인값과 다르면 실패한다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -143,7 +143,7 @@ spec:
               value: "2"
             # 멀티턴 확인 질문 기능의 초기 활성화 값. 값은 정확히 "1"/"0"만 켬/끔으로 읽힌다(true 등은 꺼짐).
             # 첫 배포에서는 요약·후속 제안을 끄고 해석 호출의 자동 재시도도 0으로 둔다(요청당 모델 호출 수를 줄인다).
-            # 끄려면 MAFEST_LLM_INTENT만 "0"으로 되돌린다. 세션 테이블은 그대로 둔다(롤백 절차: deploy/mafest-multiturn/README.md).
+            # 끄려면 MAFEST_LLM_INTENT만 "0"으로 되돌린다. 세션 테이블은 그대로 둔다(롤백 절차: ops-lab의 repos/persona-platform/runbooks/mafest-multiturn/README.md).
             - name: MAFEST_LLM_INTENT
               value: "1"
             - name: MAFEST_LLM_STRUCTURED

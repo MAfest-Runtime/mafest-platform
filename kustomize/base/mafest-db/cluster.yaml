@@ -3,7 +3,7 @@
 #
 # 이미지는 승인된 릴리스 digest로 고정돼 있어 prod 렌더(kustomization.yaml resources)에 연결한다.
 # 이미지를 바꿀 때는 태그가 아니라 승인된 릴리스의 digest로만 바꾼다 — 같은 태그가 다른 객체를 가리키면
-# Cluster 재시작 때 다른 DB 이미지가 뜬다. scripts/validate-mafest-data-manifests.sh가 digest 고정과
+# Cluster 재시작 때 다른 DB 이미지가 뜬다. ops-lab의 repos/persona-platform/tools/validate-mafest-data-manifests.sh가 digest 고정과
 # "렌더에 자리표시자(0×64) 없음"을 함께 본다.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
