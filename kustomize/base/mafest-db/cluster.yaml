@@ -25,7 +25,7 @@ spec:
   # mafest docker/postgres-age/Dockerfile 이미지(CNPG 16.15 standard + AGE 1.6.0 소스 빌드).
   # 태그는 CNPG가 major 버전을 읽게 남기고, digest로 실제 객체를 고정한다.
   # 릴리스 release-20261007-1(mafest 7cb9329d7691)의 승인 이미지.
-  imageName: ghcr.io/persona-runtime/mafest-postgres:16.15-age1.6.0-bookworm-7cb9329d7691@sha256:f0544ab73e405b4d6b115e21bf8376401a36f2d33074015b6491963f957e5c21
+  imageName: ghcr.io/mafest-runtime/mafest-postgres:16.15-age1.6.0-bookworm-7cb9329d7691@sha256:f0544ab73e405b4d6b115e21bf8376401a36f2d33074015b6491963f957e5c21
   # 비공개 GHCR 이미지. Secret 값은 Git에 없다 — 사람이 mafest-data에 mafest-ghcr를 만든다.
   imagePullSecrets:
     - name: mafest-ghcr

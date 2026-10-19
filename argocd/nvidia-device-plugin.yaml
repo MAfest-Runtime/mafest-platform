@@ -11,6 +11,6 @@ spec:
     server: https://kubernetes.default.svc
     namespace: kube-system
   source:
-    repoURL: https://github.com/Persona-Runtime/persona-platform.git
+    repoURL: https://github.com/MAfest-Runtime/mafest-platform.git
     targetRevision: develop
     path: kustomize/overlays/prod/nvidia-device-plugin

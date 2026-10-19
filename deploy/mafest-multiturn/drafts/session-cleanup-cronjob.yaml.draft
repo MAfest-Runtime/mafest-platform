@@ -52,7 +52,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: cleanup
-              image: ghcr.io/persona-runtime/mafest-app@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              image: ghcr.io/mafest-runtime/mafest-app@sha256:0000000000000000000000000000000000000000000000000000000000000000
               imagePullPolicy: IfNotPresent
               command:
                 - python

@@ -67,7 +67,7 @@ spec:
       containers:
         - name: migrate
           # 세션 마이그레이션 CLI(mafest.session.migrate)가 들어 있는 API 이미지. api-deployment.yaml 과 같은 digest 다.
-          image: ghcr.io/persona-runtime/mafest-app@sha256:6523b6dea77fd2bb54e669694ae623ee7db2bc5bd538ae53626745024c8c62e0
+          image: ghcr.io/mafest-runtime/mafest-app@sha256:6523b6dea77fd2bb54e669694ae623ee7db2bc5bd538ae53626745024c8c62e0
           imagePullPolicy: IfNotPresent
           command:
             - sh

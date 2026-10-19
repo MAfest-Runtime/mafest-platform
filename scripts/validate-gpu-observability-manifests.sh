@@ -142,7 +142,7 @@ raise "[안전] dcgm-exporter releaseName이 다르다" unless chart_source.dig(
 raise "[안전] dcgm-exporter values 파일이 다르다" unless
   chart_source.dig("helm", "valueFiles") == ["$values/helm/values/dcgm-exporter.yaml"]
 raise "[안전] dcgm-exporter values source가 develop을 보지 않는다" unless
-  values_source["repoURL"] == "https://github.com/Persona-Runtime/persona-platform.git" &&
+  values_source["repoURL"] == "https://github.com/MAfest-Runtime/mafest-platform.git" &&
   values_source["targetRevision"] == "develop"
 
 daemon_set = resource(resources, "DaemonSet", "dcgm-exporter")

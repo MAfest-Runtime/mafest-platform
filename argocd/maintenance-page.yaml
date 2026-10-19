@@ -16,7 +16,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/Persona-Runtime/persona-platform.git
+    repoURL: https://github.com/MAfest-Runtime/mafest-platform.git
     targetRevision: develop
     path: kustomize/overlays/prod/maintenance-page
   destination:
