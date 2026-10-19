@@ -19,7 +19,7 @@ spec:
           - $values/helm/values/monitoring-stack.yaml
     # ref source 이면서 path 를 가진다: values 파일을 읽을 뿐 아니라 이 경로(실험 관측 Grafana 대시보드
     # ConfigMap)도 같은 Application 이 렌더한다. 차트 source 는 바꾸지 않는다.
-    - repoURL: https://github.com/Persona-Runtime/persona-platform.git
+    - repoURL: https://github.com/MAfest-Runtime/mafest-platform.git
       targetRevision: develop
       ref: values
       path: kustomize/overlays/prod/grafana-dashboards

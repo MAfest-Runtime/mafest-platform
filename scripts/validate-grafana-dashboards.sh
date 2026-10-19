@@ -112,7 +112,7 @@ sources = app.dig("spec", "sources") || []
 raise "[안전] monitoring-stack source는 차트와 values ref 두 개여야 한다(새 source를 늘리지 않는다)" unless sources.length == 2
 chart, values = sources
 raise "[안전] 차트 source가 바뀌었다(repoURL·chart·89.2.0·releaseName·valueFiles 보존)" unless chart["repoURL"] == "https://prometheus-community.github.io/helm-charts" && chart["chart"] == "kube-prometheus-stack" && chart["targetRevision"] == "89.2.0" && chart.dig("helm", "releaseName") == "monitoring-stack" && chart.dig("helm", "valueFiles") == ["$values/helm/values/monitoring-stack.yaml"]
-raise "[안전] values ref source가 바뀌었다(repoURL·develop·ref: values)" unless values["repoURL"] == "https://github.com/Persona-Runtime/persona-platform.git" && values["targetRevision"] == "develop" && values["ref"] == "values"
+raise "[안전] values ref source가 바뀌었다(repoURL·develop·ref: values)" unless values["repoURL"] == "https://github.com/MAfest-Runtime/mafest-platform.git" && values["targetRevision"] == "develop" && values["ref"] == "values"
 raise "[안전] values source의 path는 kustomize/overlays/prod/grafana-dashboards여야 대시보드가 렌더된다" unless values["path"] == "kustomize/overlays/prod/grafana-dashboards"
 sync = app.dig("spec", "syncPolicy") || {}
 raise "[안전] monitoring-stack에 자동 Sync를 켜지 않는다(수동 Sync 원칙)" if sync.key?("automated")

@@ -37,7 +37,7 @@ raise "mock SSE must target only home workers" unless nodes == ["k8s-worker1", "
 
 container = pod_spec.fetch("containers").find { |item| item["name"] == "mock-sse" } || raise("mock-sse container missing")
 image = container.fetch("image")
-expected_image = "ghcr.io/persona-runtime/persona-mock-sse@sha256:c467296f090f3868d32d82dda92ab2aaf75b096bae1ae0a0c1e1fde4bf58666d"
+expected_image = "ghcr.io/mafest-runtime/persona-mock-sse@sha256:c467296f090f3868d32d82dda92ab2aaf75b096bae1ae0a0c1e1fde4bf58666d"
 raise "image must use the verified linux/amd64 child manifest digest" unless image == expected_image
 raise "container port must be 8080" unless container.dig("ports", 0, "containerPort") == 8080
 raise "grace period must be passed to the server" unless container.dig("env", 0, "name") == "MOCK_SSE_GRACE_PERIOD_SECONDS" && container.dig("env", 0, "value") == "5"

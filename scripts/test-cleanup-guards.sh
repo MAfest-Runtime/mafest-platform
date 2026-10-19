@@ -244,19 +244,19 @@ case "$SCENARIO" in
   job-running)
     case "$FAKE_ARGS" in
       *"get job persona-migrate"*conditions*)
-        echo '||1|0|ghcr.io/persona-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6'
+        echo '||1|0|ghcr.io/mafest-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6'
         exit 0 ;;
     esac ;;
   job-failed)
     case "$FAKE_ARGS" in
       *"get job persona-migrate"*conditions*)
-        echo '|True||0|ghcr.io/persona-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6'
+        echo '|True||0|ghcr.io/mafest-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6'
         exit 0 ;;
     esac ;;
   job-image-mismatch)
     case "$FAKE_ARGS" in
       *"get job persona-migrate"*conditions*)
-        echo 'True|||1|ghcr.io/persona-runtime/persona-minimal-api@sha256:0000000000000000000000000000000000000000000000000000000000000000'
+        echo 'True|||1|ghcr.io/mafest-runtime/persona-minimal-api@sha256:0000000000000000000000000000000000000000000000000000000000000000'
         exit 0 ;;
     esac ;;
   va-references-pv)
@@ -395,7 +395,7 @@ case "$FAKE_ARGS" in
   *"get volumeattachment"*)          exit 0 ;;
   # migration Job: Complete=True, Failed 없음, 활성 없음, succeeded=1, 승인된 digest
   *"get job persona-migrate"*conditions*)
-    echo 'True|||1|ghcr.io/persona-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6'
+    echo 'True|||1|ghcr.io/mafest-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6'
     exit 0 ;;
   *"get job persona-migrate"*)       echo "job.batch/persona-migrate-0001-persona-minimal"; exit 0 ;;
   # mock SSE Deployment 가 살아 있으므로 그 Pod 가 pull Secret 을 참조한다(정상).

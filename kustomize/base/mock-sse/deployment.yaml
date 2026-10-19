@@ -46,7 +46,7 @@ spec:
         - name: mock-sse
           # The verified linux/amd64 child manifest. Never substitute a tag (including "latest")
           # or the parent OCI index digest.
-          image: ghcr.io/persona-runtime/persona-mock-sse@sha256:c467296f090f3868d32d82dda92ab2aaf75b096bae1ae0a0c1e1fde4bf58666d
+          image: ghcr.io/mafest-runtime/persona-mock-sse@sha256:c467296f090f3868d32d82dda92ab2aaf75b096bae1ae0a0c1e1fde4bf58666d
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -20,7 +20,7 @@ spec:
         releaseName: metallb
         valueFiles:
           - $values/helm/values/metallb.yaml
-    - repoURL: https://github.com/Persona-Runtime/persona-platform.git
+    - repoURL: https://github.com/MAfest-Runtime/mafest-platform.git
       targetRevision: develop
       ref: values
   destination:

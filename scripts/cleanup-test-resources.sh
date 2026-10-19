@@ -57,7 +57,7 @@ APP_NS=persona-app
 NFS_NS=persona-nfs-test
 NFS_PVC=nfs-smoke-data
 # migration Job 이 우리가 승인한 그 실행인지 확인하는 기대값.
-WANT_MIGRATE_IMAGE=${PERSONA_MIGRATE_IMAGE:-ghcr.io/persona-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6}
+WANT_MIGRATE_IMAGE=${PERSONA_MIGRATE_IMAGE:-ghcr.io/mafest-runtime/persona-minimal-api@sha256:922ae043feaa1a893336816c38ac17f448aa96c44ba06983652181784f52c2f6}
 
 # PV 신원 기대값. 20Gi 운영 PV(persona-db·Prometheus)와 혼동하지 않기 위한 관문이다.
 WANT_SC=nfs-shared
