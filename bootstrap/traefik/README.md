@@ -51,12 +51,52 @@ false`로 막는다. 자세한 값은 [공개 진입 런북](../../runbooks/publ
 | `providers.kubernetesGateway` | true | Gateway API만 사용 |
 | `providers.kubernetesIngress` / `kubernetesCRD` | false | 진입 경로를 하나로 고정 |
 | `gateway.enabled` | false | Gateway 리소스는 우리가 선언·버전관리 |
-| 배치·replica | 2개, 두 홈 워커가 후보, 분산 권장 | 사용자 출력으로 두 워커 각각 Ready 1개 확인 |
+| 배치·replica | 2개, 두 홈 워커에 1개씩 **필수 분산**(`requiredDuringScheduling` podAntiAffinity) | `externalTrafficPolicy: Local`에서는 Pod가 몰리면 VIP도 한 노드에 묶인다. 2026-10-18 조회에서 두 Pod가 같은 노드에 있었다 |
+| 업데이트 방식 | `maxSurge: 0`, `maxUnavailable: 1` | 필수 분산에서는 surge Pod가 갈 노드가 없어 기본값이면 업데이트가 멈춘다 |
+| PodDisruptionBudget | `minAvailable: 1` | drain 같은 eviction만 제한한다. 롤링 업데이트와 노드 장애의 생존을 보장하지는 않는다 |
 | `priorityClassName` | 빈 문자열 | 커스텀 우선순위 튜닝은 자원 압박 측정 뒤로 보류 |
 
 2026-09-11 승인에 따라 로컬 values의 커스텀 우선순위를 해제했다. 실제 Helm 릴리스와
 실행 중인 Pod에 반영된 것은 아니다. 후속 CP 작업에서 기존 values와 렌더 결과를 비교한 뒤
 승인된 Helm 업데이트로 적용한다. 기존 PriorityClass 리소스와 Kubernetes 시스템 우선순위는 삭제하지 않는다.
+
+## 분산 배치 강제 적용 절차
+
+values 변경은 저장소에만 반영되어 있고 클러스터에는 사용자가 적용한다. `<ctx>`는 홈 클러스터의
+kube context 이름이다. 터미널 기본 context가 다른 클러스터일 수 있으므로 모든 명령에 명시한다.
+
+```bash
+# 0) 대상 클러스터 확인과 현재 상태 기록
+kubectl config get-contexts
+kubectl --context <ctx> get nodes
+kubectl --context <ctx> -n traefik get pod -o wide
+kubectl --context <ctx> -n metallb-system get servicel2statuses -o wide 2>/dev/null   # VIP 광고 노드
+
+# 0-1) 복구 지점 기록 (rollback에 쓸 revision과 현재 값)
+helm --kube-context <ctx> -n traefik history traefik
+helm --kube-context <ctx> -n traefik get values traefik > traefik-values-before.yaml
+
+# 1) 별도 터미널에서 공개 경로를 1초 간격으로 확인해 끊김을 잰다
+while true; do printf '%s ' "$(date +%T)"; curl -sk -o /dev/null -w '%{http_code}\n' --max-time 2 https://app.personaruntime.xyz/healthz; sleep 1; done
+
+# 2) 업그레이드 (values 전체 재전달, --reuse-values 쓰지 않음)
+helm --kube-context <ctx> upgrade traefik traefik/traefik --version 41.4.0 -n traefik -f bootstrap/traefik/values.yaml
+kubectl --context <ctx> -n traefik rollout status deploy/traefik --timeout=5m
+
+# 3) 확인
+kubectl --context <ctx> -n traefik get pod -o wide      # worker1, worker2 각 1개
+kubectl --context <ctx> -n traefik get pdb
+kubectl --context <ctx> -n metallb-system get servicel2statuses -o wide 2>/dev/null
+```
+
+- 복구: `helm --kube-context <ctx> -n traefik rollback traefik <0-1에서 기록한 revision>`. 복구 뒤에도
+  Pod 배치와 PDB를 같은 방식으로 확인한다.
+- 필수 규칙과 `maxUnavailable: 1` 조합이면 롤아웃 중 worker2의 Pod가 하나씩 교체되며 새 Pod가
+  worker1로 갈 것으로 예상한다. 별도 Pod 삭제 없이 재분산되는지는 결과로 확인한다.
+- 1번 터미널의 실패 줄 수와 시각을 기록한다.
+- 쏠림 감지 규칙(`kustomize/overlays/prod/traefik-observability`)은 `kubectl apply -k`로 CP에서
+  수동 적용한다([argocd/README](../../argocd/README.md)). 적용 뒤 Prometheus UI Alerts 탭에서 확인한다.
+  CoreDNS는 이 변경의 대상이 아니다. 규칙은 쏠림을 보여 줄 뿐이고 재분산은 별도로 판단한다.
 
 ## 함정: 스키마 검증은 섹션별로만 걸린다
 

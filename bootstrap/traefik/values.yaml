@@ -9,6 +9,17 @@ nodeSelector: {}
 deployment:
   replicas: 2
 
+# 두 Traefik Pod는 서로 다른 홈 워커에 둔다(필수 규칙).
+# - 2026-09-08에는 "권장(preferred)"으로 정했다. 워커가 두 대라 강제하면 노드 하나가 빠질 때
+#   Pod가 Pending이 되고 롤링 업데이트 여유가 줄기 때문이었다.
+# - 2026-09-17에 externalTrafficPolicy: Local을 넣으면서 조건이 바뀌었다. MetalLB는 Ready
+#   엔드포인트가 있는 노드에서만 VIP를 광고하므로, Pod가 한 노드에 몰리면 VIP도 그 노드에
+#   묶인다.
+# - 2026-10-18 조회에서 Traefik 2개가 모두 k8s-worker2에 있었다. preferred 규칙은 배치된 뒤
+#   다시 나누지 않으므로 한번 몰리면 그대로 남는다. 언제부터 몰렸는지는 Pod 생성 기록이 없어
+#   확정하지 못한다(Deployment Available 전환 시각 2026-10-01 16:06은 정황일 뿐이다).
+# - 그래서 필수 규칙으로 바꾼다. 감수하는 비용: 노드 하나가 빠진 동안 Traefik은 1개만
+#   남고(빠진 노드의 Pod는 Pending), 업데이트 중 VIP 광고 노드가 바뀌면 수 초 끊길 수 있다.
 affinity:
   nodeAffinity:
     requiredDuringSchedulingIgnoredDuringExecution:
@@ -20,14 +31,26 @@ affinity:
                 - k8s-worker1
                 - k8s-worker2
   podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
-          topologyKey: kubernetes.io/hostname
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: traefik
-              app.kubernetes.io/instance: traefik-traefik
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - topologyKey: kubernetes.io/hostname
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: traefik
+            app.kubernetes.io/instance: traefik-traefik
+
+# 필수 분산 + 노드 두 대에서는 surge Pod가 갈 곳이 없어 기본값(maxSurge 1)이면 업데이트가
+# 멈춘다. 한 번에 한 Pod를 내리고 새로 올리는 방식으로 바꾼다.
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# PDB는 drain 같은 eviction만 제한한다. 롤링 업데이트나 노드 장애 때 최소 1개 생존을
+# 보장하지는 않는다(업데이트는 위 updateStrategy와 readinessProbe가 맡는다).
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
 
 # 2026-09-17 공개 진입 결정: MetalLB가 있는 LoadBalancer만 허용, NodePort 할당은 off.
 # 이전의 "public inbound 0 원칙, NodePort/LoadBalancer 금지"는 여기서 뒤집힌다 — 공유기가
