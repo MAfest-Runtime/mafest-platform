@@ -43,3 +43,40 @@ spec:
           annotations:
             summary: "인증서 만료가 14일 이내로 다가왔다 ({{ $labels.name }})"
             description: "{{ $labels.namespace }}/{{ $labels.name }} 인증서가 14일 안에 만료된다. cert-manager의 자동 갱신(기본 만료 30일 전 시도)이 실패했는지 확인한다. Alertmanager가 꺼져 있어 통지는 가지 않는다."
+    - name: ingress-dns-colocation
+      rules:
+        # 같은 노드에 실제로 실행 중인 Pod만 센다. kube_pod_info에는 끝난(Succeeded/Failed) Pod와
+        # 아직 노드가 없는 Pod도 남으므로 node가 비어 있지 않고 Running인 Pod로 좁히고,
+        # 삭제 중인 Pod는 뺀다. kube_pod_deletion_timestamp가 노출되지 않으면 unless가 아무것도
+        # 빼지 않아 삭제 중인 Pod를 세는 쪽으로만 틀린다(동거 오탐 가능, 놓치지는 않음).
+        #
+        # Traefik은 bootstrap/traefik/values.yaml의 필수 분산으로 원칙상 발화하지 않는다.
+        # 이 규칙은 그 설정이 빠지거나 되돌려지는 회귀를 잡는 안전망이다.
+        - alert: TraefikPodsColocated
+          expr: |
+            count by (node) (
+              kube_pod_info{namespace="traefik", pod=~"traefik-.*", node!=""}
+                and on (namespace, pod) (kube_pod_status_phase{namespace="traefik", phase="Running"} == 1)
+                unless on (namespace, pod) kube_pod_deletion_timestamp
+            ) > 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Traefik Pod 2개가 같은 노드({{ $labels.node }})에 있다"
+            description: "노드 하나가 멈추면 공개 진입이 Pod 재배치 전까지 끊긴다. Alertmanager가 꺼져 있어 통지는 가지 않는다 — Prometheus UI에서 확인한다."
+        # CoreDNS는 kubeadm이 관리하는 Deployment라 이 저장소에서 배치를 고치지 않는다.
+        # 쏠림을 보여 주기만 하고 재분산은 별도 판단이다.
+        - alert: CoreDNSPodsColocated
+          expr: |
+            count by (node) (
+              kube_pod_info{namespace="kube-system", pod=~"coredns-.*", node!=""}
+                and on (namespace, pod) (kube_pod_status_phase{namespace="kube-system", phase="Running"} == 1)
+                unless on (namespace, pod) kube_pod_deletion_timestamp
+            ) > 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CoreDNS Pod 2개가 같은 노드({{ $labels.node }})에 있다"
+            description: "노드 하나가 멈추면 클러스터 DNS가 Pod 재배치 전까지 끊긴다. Alertmanager가 꺼져 있어 통지는 가지 않는다 — Prometheus UI에서 확인한다."
