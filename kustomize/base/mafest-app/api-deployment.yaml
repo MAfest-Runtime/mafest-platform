@@ -77,7 +77,7 @@ spec:
         - name: api
           # 승인된 앱 릴리스(mafest c345fbf2…)의 digest. 최초 적재용 digest와 다르다. 릴리스마다 사람이 승인한 값으로
           # 바꾸고 validator의 승인 상수도 함께 갱신한다.
-          image: ghcr.io/mafest-runtime/mafest-app@sha256:6523b6dea77fd2bb54e669694ae623ee7db2bc5bd538ae53626745024c8c62e0
+          image: ghcr.io/mafest-runtime/mafest-app@sha256:524f596934eebe4399b533d207cba3f395cb7f5780ab6710b480d4b314b4492f
           imagePullPolicy: IfNotPresent
           # 이미지 CMD에 --timeout-graceful-shutdown이 없어 같은 실행 형태에 그 옵션만 더해 명시한다.
           # command는 쓰지 않는다(이미지에 ENTRYPOINT가 없어 args가 CMD를 대체한다).
@@ -142,8 +142,8 @@ spec:
             - name: MAFEST_GRAPH_POOL_MAX
               value: "2"
             # 멀티턴 확인 질문 기능의 초기 활성화 값. 값은 정확히 "1"/"0"만 켬/끔으로 읽힌다(true 등은 꺼짐).
-            # 첫 배포에서는 요약·후속 제안을 끄고 해석 호출의 자동 재시도도 0으로 둔다(요청당 모델 호출 수를 줄인다).
-            # 끄려면 MAFEST_LLM_INTENT만 "0"으로 되돌린다. 세션 테이블은 그대로 둔다(롤백 절차: ops-lab의 repos/persona-platform/runbooks/mafest-multiturn/README.md).
+            # 요약은 values 모드로 켠다(MAFEST_LLM_SUMMARY_MODE는 "values"|"natural"). 후속 제안과 해석 호출의 자동 재시도는 계속 끈다(요약 외에는 요청당 모델 호출 수를 늘리지 않는다).
+            # 확인 질문 기능을 끄려면 MAFEST_LLM_INTENT만 "0"으로, 요약만 끄려면 MAFEST_LLM_SUMMARY만 "0"으로 되돌린다. 세션 테이블은 그대로 둔다(롤백 절차: ops-lab의 repos/persona-platform/runbooks/mafest-multiturn/README.md).
             - name: MAFEST_LLM_INTENT
               value: "1"
             - name: MAFEST_LLM_STRUCTURED
@@ -151,7 +151,9 @@ spec:
             - name: MAFEST_LLM_RETRIES
               value: "0"
             - name: MAFEST_LLM_SUMMARY
-              value: "0"
+              value: "1"
+            - name: MAFEST_LLM_SUMMARY_MODE
+              value: values
             - name: MAFEST_LLM_SUGGEST
               value: "0"
             # 세션 저장소 풀은 Pod당 최대 2 연결(첫 사용 때 연결한다). 롤링 중 연결 예산은 검사기가 계산한다.
