@@ -182,12 +182,38 @@ monitor = resource(resources, "ServiceMonitor", "dcgm-exporter")
 raise "[안전] DCGM ServiceMonitor에 release=monitoring-stack 라벨이 없다" unless
   monitor.dig("metadata", "labels", "release") == "monitoring-stack"
 raise "[안전] DCGM ServiceMonitor endpoint가 다르다" unless monitor.dig("spec", "endpoints") == [{
-  "port" => "metrics", "path" => "/metrics", "interval" => "30s",
-  "scrapeTimeout" => "10s", "honorLabels" => false,
+  "port" => "metrics", "path" => "/metrics", "interval" => "5s",
+  "scrapeTimeout" => "4s", "honorLabels" => false,
   # chart는 비어 있는 relabeling 목록도 명시한다. 이 목록을 허용하지 않으면 전체
   # endpoint를 바꾼 경우와 단순 기본값 표현을 구분할 수 없다.
   "relabelings" => [], "metricRelabelings" => [],
 }]
+
+# B0 GPU 계측: 5초 수집. exporter 수집 간격(DCGM_EXPORTER_INTERVAL, ms)과 ServiceMonitor
+# interval이 같아야 하고, scrapeTimeout은 interval보다 클 수 없다(Prometheus가 설정을 거부한다).
+# helm은 모르는 values 키를 조용히 무시하므로 렌더된 DaemonSet env로 확인한다.
+interval_env = (exporter["env"] || []).find { |item| item["name"] == "DCGM_EXPORTER_INTERVAL" }
+raise "[기준선] DCGM exporter 수집 간격 환경변수(DCGM_EXPORTER_INTERVAL)가 렌더에 없다" if interval_env.nil?
+raise "[기준선] DCGM exporter 수집 간격이 5000ms가 아니다: #{interval_env['value'].inspect}" unless
+  interval_env["value"] == "5000"
+endpoint = monitor.dig("spec", "endpoints", 0)
+to_seconds = ->(text) { Integer(text.to_s.delete_suffix("s")) }
+raise "[기준선] ServiceMonitor scrapeTimeout이 interval보다 크다" if
+  to_seconds.call(endpoint["scrapeTimeout"]) > to_seconds.call(endpoint["interval"])
+
+# 수집 지표 목록은 차트 기본 목록에 B0 세 줄을 더한 것이다. customMetrics는 전체 목록이라
+# 기본 항목이 빠지면 지금 쓰는 지표가 조용히 사라지므로 쓰는 지표도 함께 확인한다.
+metrics_map = resource(resources, "ConfigMap", "exporter-metrics-config-map")
+active_fields = metrics_map.dig("data", "metrics").to_s.lines.map(&:strip)
+  .reject { |line| line.empty? || line.start_with?("#") }
+  .map { |line| line.split(",").first.strip }
+required_fields = %w[
+  DCGM_FI_PROF_SM_ACTIVE DCGM_FI_PROF_SM_OCCUPANCY DCGM_FI_DEV_CLOCKS_EVENT_REASONS
+  DCGM_FI_PROF_GR_ENGINE_ACTIVE DCGM_FI_PROF_PIPE_TENSOR_ACTIVE DCGM_FI_PROF_DRAM_ACTIVE
+  DCGM_FI_DEV_POWER_USAGE DCGM_FI_DEV_SM_CLOCK DCGM_FI_DEV_GPU_UTIL DCGM_FI_DEV_FB_USED
+]
+missing_fields = required_fields - active_fields
+raise "[기준선] DCGM 수집 목록에 빠진 지표: #{missing_fields.join(', ')}" unless missing_fields.empty?
 
 puts "GPU RuntimeClass·DCGM exporter·NVIDIA device plugin 렌더 계약 검사 통과"
 RUBY
