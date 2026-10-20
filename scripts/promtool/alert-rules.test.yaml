@@ -1,0 +1,41 @@
+# scripts/validate-alert-rules.sh가 쓰는 promtool 단위 시험. 합성 시계열만 쓴다.
+# 문구에 묶이지 않도록 시험용 복사본은 annotations를 뺀 규칙을 읽는다.
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  # 실패한 ddns Job은 시작 후 30분 안에는 발화하고, 오래 남은 실패 Job은 발화하지 않는다.
+  - name: ddns failure fires within 30m of job start and resolves after
+    interval: 1m
+    input_series:
+      - series: 'kube_job_failed{namespace="persona-edge", job_name="ddns-update-100", condition="true"}'
+        values: '1x180'
+      - series: 'kube_job_status_start_time{namespace="persona-edge", job_name="ddns-update-100"}'
+        values: '600x180'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: DdnsUpdateJobFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: persona-edge
+              job_name: ddns-update-100
+              condition: "true"
+      - eval_time: 3h
+        alertname: DdnsUpdateJobFailed
+        exp_alerts: []
+  # src_valid_mark가 1로 1분 넘게 유지된 노드만 발화한다.
+  - name: src_valid_mark fires only when held at 1
+    interval: 1m
+    input_series:
+      - series: 'node_sysctl_net_ipv4_conf_all_src_valid_mark{instance="n1"}'
+        values: '0 0 1 1 1 1'
+      - series: 'node_sysctl_net_ipv4_conf_all_src_valid_mark{instance="n2"}'
+        values: '0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SrcValidMarkEnabled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: n1

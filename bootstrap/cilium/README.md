@@ -146,3 +146,69 @@ GPU 노드 tailscaled가 `cilium_host`(Pod 대역) 주소를 연결 후보로 �
 Tailscale 패킷이 자기 터널로 다시 들어가는 순환). Cilium 설정은 바꾸지 않고, 노드에서 Pod 대역과 오가는
 Tailscale UDP를 버려 해결한다. 원인 증거, 적용·검증·되돌리기는
 [tailscale-podcidr-guard](../tailscale-podcidr-guard/README.md)에 있다.
+
+## 지표 수집과 ddns DNS 실패 계측
+
+persona-edge/ddns-update가 FQDN 정책 아래에서 가끔 `Could not resolve host`로 실패한다.
+10-19 14:30 건의 worker1 cilium-agent 로그에는 `forwarded proxied DNS lookup ... i/o timeout`
+(Cilium DNS 프록시가 Pod 주소로 CoreDNS에 넘긴 질의의 응답이 안 돌아옴)이 있었고 같은 시간 CoreDNS의
+SERVFAIL은 0이었다. 원인은 아직 모른다. 다음 실패 때 원인을 좁히려고 지표를 수집한다.
+
+| 지표 | 포트 | 수집 선언 |
+| --- | --- | --- |
+| cilium-agent (`cilium_drop_count_total` 등) | 9962 | `prometheus.serviceMonitor` |
+| Hubble (`hubble_drop_total`, `hubble_dns_*` 등) | 9965 | `hubble.metrics.serviceMonitor` |
+| `src_valid_mark` | node-exporter 9100 | `helm/values/monitoring-stack.yaml`의 sysctl collector |
+
+- 두 ServiceMonitor는 `release: monitoring-stack` 라벨이 있어야 Prometheus가 고른다.
+- Hubble 지표 라벨은 source/destination namespace로 제한했다(`labelsContext`). 옵션을 주지 않으면 IP·workload가
+  라벨에 들어가 시계열이 Pod 수에 따라 늘어난다. dns에는 `query` 옵션을 주지 않았다(도메인별 시계열 방지).
+- 두 포트는 hostNetwork라 Pod 단위 NetworkPolicy 대상이 아니고, 저장소에 host firewall 선언도 없어
+  NetworkPolicy는 바꾸지 않았다. node-exporter(9100)가 이미 같은 경로로 수집되고 있다.
+  GPU 노드에서 막히는지는 노드에서 `sudo ufw status`, `sudo nft list ruleset | head -40`으로 확인한다.
+- 렌더 확인: `sh scripts/validate-cilium-metrics-values.sh`(ServiceMonitor 2개·라벨·hubble 옵션),
+  `sh scripts/validate-monitoring-manifests.sh`(node-exporter 인자), `sh scripts/validate-alert-rules.sh`(알림 규칙).
+
+### 적용 순서와 재시작 영향
+
+```bash
+# 1) Cilium: 현재 values 전체를 다시 넘긴다. --reuse-values는 쓰지 않는다
+#    (이전 릴리스에 남은 값과 이 파일이 섞여 어느 값이 적용됐는지 알 수 없게 된다)
+cd bootstrap/cilium
+helm upgrade cilium cilium/cilium --version 1.20.1 -n kube-system -f values.yaml \
+  --kube-context <context>
+kubectl --context <context> -n kube-system rollout status ds/cilium
+
+# 2) monitoring-stack Argo Sync (node-exporter 인자) — 수동 Sync 규약을 따른다
+# 3) 알림 규칙: Argo가 아니라 CP에서 수동 적용한다(argocd/README.md 참고)
+kubectl --context <context> apply -k kustomize/overlays/prod/traefik-observability
+```
+
+- `hubble-metrics` 설정이 ConfigMap 체크섬을 바꿔 **cilium-agent DaemonSet이 롤링 재시작**된다
+  (`rollOutCiliumPods: true`). eBPF 데이터패스는 agent가 내려가도 유지되므로 기존 연결은 일반적으로 끊기지 않는다(이 클러스터에서 실측하지는 않았다).
+- agent가 다시 뜨는 동안 정책을 재생성하고 **DNS 프록시도 agent와 함께 내려간다.** 이 사이에 FQDN 정책을 쓰는 Pod
+  (ddns-update, oauth2-proxy)의 DNS 질의가 실패할 수 있다. ddns-update가 방금 성공한 직후에 적용하면
+  다음 실행(5분 뒤)까지 여유가 있다.
+- node-exporter DaemonSet도 재시작된다(수집 공백 1~2번).
+
+### 적용 후 확인 (Prometheus에서)
+
+```promql
+count by (__name__)({__name__=~"cilium_drop_count_total|hubble_drop_total|hubble_dns_.*"})   # 비어 있지 않아야 한다
+node_sysctl_net_ipv4_conf_all_src_valid_mark                                                    # 노드 4대 모두 0
+```
+
+### 다음 ddns 실패가 나면 (DdnsUpdateJobFailed 알림이 안내하는 항목)
+
+실패 시각 앞뒤 15분 구간을 함께 기록한다.
+
+```bash
+kubectl --context <context> -n kube-system logs -l k8s-app=cilium --since=30m --tail=-1 \
+  | grep "forwarded proxied DNS lookup"
+```
+
+```promql
+sum by (reason) (increase(hubble_drop_total[30m]))
+sum by (rcode) (increase(hubble_dns_responses_total[30m]))
+node_sysctl_net_ipv4_conf_all_src_valid_mark
+```

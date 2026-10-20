@@ -41,6 +41,42 @@ Argo Application이 없는 이유까지 같이 적는다 — "왜 여기 없는�
 | `kustomize/overlays/prod/mock-sse` | 없음(2026-09-16 de-registered) | 완료된 실험 자원 정리 — 재등록 절차는 `runbooks/test-resource-cleanup.md`(로컬) |
 | `kustomize/overlays/prod/mafest-load` | `kubectl apply -k`(CP 수동, runbook 단계마다 한 Job) | 일회성 적재(stage → graph)라 상시 Sync 대상에 두지 않는다. 평상시 `resources: []` |
 
+## dcgm-exporter 수집 지표와 5초 간격 (B0 GPU 계측)
+
+추론 측정 구간마다 GPU 안에서 무엇이 바빴는지 보려고 SM 수준 지표를 더하고 수집 간격을 5초로 줄였다.
+`helm/values/dcgm-exporter.yaml`의 `customMetrics`(차트 4.8.4 기본 목록 + 세 줄), `extraEnv`(exporter 간격),
+`serviceMonitor.interval/scrapeTimeout`이 한 묶음이다. 지표 뜻은 values 주석에 있다.
+
+- 추가: `DCGM_FI_PROF_SM_ACTIVE`, `DCGM_FI_PROF_SM_OCCUPANCY`, `DCGM_FI_DEV_CLOCKS_EVENT_REASONS`.
+  이미지 `4.6.1-4.8.4`의 DCGM은 4.6.1(3.3 이상)이라 새 이름을 쓴다. 이전 이름
+  `DCGM_FI_DEV_CLOCK_THROTTLE_REASONS`는 같은 필드 번호의 폐기된 별칭이다.
+- `customMetrics`는 추가분이 아니라 **전체 목록**이다. 기본 항목을 지우면 지금 쓰는 지표가 사라진다.
+- exporter 간격은 명령줄 `-c 5000` 대신 `DCGM_EXPORTER_INTERVAL=5000`(ms)으로 준다. 차트가 인자 값을
+  따옴표 없이 렌더해 Kubernetes가 거부한다. `scrapeTimeout`은 `interval`보다 클 수 없어 4s로 낮췄다.
+- 시계열 수는 GPU 1장이라 그대로이고 샘플 수만 6배(30s→5s)가 된다.
+- 렌더 확인: `sh scripts/validate-gpu-observability-manifests.sh`
+
+적용(수동 Sync, exporter Pod가 재시작되어 그 사이 GPU 지표가 잠시 비고 vLLM 요청에는 영향이 없다):
+
+```bash
+scripts/argo-preflight.sh --sha <SHA> dcgm-exporter
+argocd app sync dcgm-exporter --revision <SHA>
+```
+
+적용 후 확인(context를 명시한다):
+
+```bash
+POD=$(kubectl --context <context> -n monitoring get pod -l app.kubernetes.io/name=dcgm-exporter -o jsonpath='{.items[0].metadata.name}')
+kubectl --context <context> -n monitoring port-forward pod/$POD 19400:9400 >/dev/null 2>&1 &
+sleep 2; curl -s localhost:19400/metrics | grep -oE '^DCGM_FI_[A-Z_]+' | sort -u; kill %1
+```
+
+L4에서는 profiling 지표 일부를 동시에 못 모으는 경우가 있다. 지표가 빠지면 exporter 로그의 경고를 본다:
+
+```bash
+kubectl --context <context> -n monitoring logs $POD | grep -iE "warn|error|not supported|field"
+```
+
 ## 폐기한 Application (2026-10-07)
 
 `persona-app`·`persona-app-ingress`·`persona-app-netpol`·`persona-db`·`persona-db-netpol`·

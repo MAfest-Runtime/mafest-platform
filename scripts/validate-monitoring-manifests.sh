@@ -188,5 +188,19 @@ unless node_exporter_pod["tolerations"] == [expected_gpu_toleration,
   raise "[안전] node-exporter taint 허용 범위(GPU, control-plane)가 다르다"
 end
 
+# 8. src_valid_mark 수집 인자와 기존 filesystem 제외 인자가 함께 있어야 한다. extraArgs는 목록이라
+#    차트 기본값과 병합되지 않는다 — sysctl 인자만 적으면 filesystem 제외가 조용히 사라지고,
+#    인자 이름을 틀려도 helm은 오류를 내지 않는다. 렌더된 인자로 둘 다 확인한다.
+node_exporter_args = node_exporter_pod.fetch("containers").find { |item| item["name"] == "node-exporter" }
+  &.fetch("args") || raise("[안전] node-exporter 컨테이너 args가 없다")
+unless node_exporter_args.include?("--collector.sysctl") &&
+       node_exporter_args.include?("--collector.sysctl.include=net.ipv4.conf.all.src_valid_mark")
+  raise "[기준선] node-exporter가 src_valid_mark를 수집하지 않는다(sysctl collector 인자 없음)"
+end
+unless node_exporter_args.any? { |arg| arg.start_with?("--collector.filesystem.mount-points-exclude=") } &&
+       node_exporter_args.any? { |arg| arg.start_with?("--collector.filesystem.fs-types-exclude=") }
+  raise "[기준선] node-exporter filesystem 제외 인자가 사라졌다 — extraArgs가 기본값을 덮어썼다"
+end
+
 puts "monitoring-stack 렌더와 Grafana·datasource 기준선 검사 통과"
 RUBY

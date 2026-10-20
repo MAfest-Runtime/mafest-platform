@@ -129,6 +129,17 @@ prometheus-node-exporter:
                   - k8s-worker1
                   - k8s-worker2
                   - persona-gpu-01
+  # tailscaled가 켠 src_valid_mark(1이면 Cilium DNS 프록시 패킷이 조용히 버려진다)가 다시
+  # 켜졌는지 기록한다. 지표는 node_sysctl_net_ipv4_conf_all_src_valid_mark. 노드에 파일이나
+  # 타이머를 두지 않고 저장소 선언 한 줄로 끝내려고 textfile 대신 sysctl collector를 쓴다.
+  # `extraArgs`는 목록이라 차트 기본값과 병합되지 않고 통째로 바뀐다. 기본값에 들어 있던
+  # filesystem 제외 인자 두 개를 그대로 다시 적는다(빠뜨리면 컨테이너 overlay·kubelet 마운트가
+  # 지표에 섞여 들어온다). 차트 버전을 올릴 때 이 두 줄이 기본값과 같은지 helm template로 비교한다.
+  extraArgs:
+    - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+    - --collector.sysctl
+    - --collector.sysctl.include=net.ipv4.conf.all.src_valid_mark
   # Helm 목록 값은 병합되지 않고 통째로 바뀐다. 그래서 허용할 taint를 모두 여기에 적는다.
   tolerations:
     - key: personaruntime.xyz/dedicated

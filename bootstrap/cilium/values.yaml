@@ -55,17 +55,37 @@ hubble:
   ui:
     enabled: true
   metrics:
+    # 라벨을 source/destination namespace로 제한한다. 옵션을 주지 않으면 IP·workload 같은
+    # 값이 라벨에 들어가 Pod가 늘 때마다 시계열이 함께 늘어난다. dns에는 `query` 옵션을
+    # 주지 않는다(질의 도메인별 시계열이 생긴다). 이 목록의 옵션 이름이 틀려도 helm은
+    # 오류를 내지 않으므로 helm template로 hubble-metrics 줄을 확인한다.
     enabled:
-      - dns
-      - drop
-      - tcp
-      - flow
-      - icmp
+      - dns:labelsContext=source_namespace,destination_namespace
+      - drop:labelsContext=source_namespace,destination_namespace
+      - tcp:labelsContext=source_namespace,destination_namespace
+      - flow:labelsContext=source_namespace,destination_namespace
+      - icmp:labelsContext=source_namespace,destination_namespace
+    # kube-prometheus-stack은 `release: monitoring-stack` 라벨이 있는 ServiceMonitor만 고른다
+    # (serviceMonitorSelectorNilUsesHelmValues 기본값). 라벨이 없으면 만들어져도 수집되지 않는다.
+    serviceMonitor:
+      enabled: true
+      # chart 기본 10s는 hubble 시계열이 많을수록 샘플 수가 늘어난다. DNS 실패는 분 단위라 30s로 충분하다.
+      interval: 30s
+      labels:
+        release: monitoring-stack
 
-# --- 메트릭 노출 (Prometheus는 아직 미설치) ---
-# serviceMonitor는 Prometheus Operator 설치 후에 켠다. 지금 켜면 CRD가 없어 실패한다.
+# --- 메트릭 노출 (cilium-agent :9962, hubble :9965, 둘 다 hostNetwork) ---
+# monitoring-stack이 설치돼 있어 ServiceMonitor를 켠다. 수집 라벨 조건은 위 hubble 주석을 본다.
 prometheus:
   enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels:
+      release: monitoring-stack
+    # 차트는 렌더 시점에 CRD가 있는지 클러스터에 묻는다. CRD는 monitoring-stack이 설치하므로
+    # 그 확인을 건너뛴다(helm template처럼 클러스터 없는 렌더에서도 ServiceMonitor가 나온다).
+    trustCRDsExist: true
 operator:
   prometheus:
     enabled: true

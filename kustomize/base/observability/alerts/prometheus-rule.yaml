@@ -80,3 +80,39 @@ spec:
           annotations:
             summary: "CoreDNS Pod 2개가 같은 노드({{ $labels.node }})에 있다"
             description: "노드 하나가 멈추면 클러스터 DNS가 Pod 재배치 전까지 끊긴다. Alertmanager가 꺼져 있어 통지는 가지 않는다 — Prometheus UI에서 확인한다."
+    # ddns-update(persona-edge, 5분 CronJob)가 가끔 `Could not resolve host`로 실패한다. 원인은
+    # 아직 모른다 — Cilium DNS 프록시가 CoreDNS로 넘긴 질의의 응답이 돌아오지 않았다는 로그만
+    # 있다. 이 그룹은 고치는 규칙이 아니라 **실패한 시점에 어디를 봐야 하는지** 알리는 규칙이다.
+    - name: ddns-dns-failure
+      rules:
+        # failedJobsHistoryLimit이 1이라 실패한 Job이 다음 실패까지 남는다. 그대로 두면 오래전
+        # 실패가 계속 발화하므로 Job 시작 시각이 30분 안인 것만 센다. Job이 실패로 확정되기까지
+        # 재시도에 10분쯤 걸리므로 발화는 실제 첫 실패보다 늦다.
+        - alert: DdnsUpdateJobFailed
+          expr: |
+            (kube_job_failed{namespace="persona-edge", job_name=~"ddns-update-.*", condition="true"} == 1)
+              and on (namespace, job_name)
+            (time() - kube_job_status_start_time{namespace="persona-edge", job_name=~"ddns-update-.*"} < 30 * 60)
+          labels:
+            severity: warning
+          annotations:
+            summary: "ddns-update Job {{ $labels.job_name }}이 실패했다"
+            description: |-
+              Alertmanager가 꺼져 있어 통지는 가지 않는다 — Prometheus UI에서 확인한다. 같은 시각 구간의 기록을 함께 남긴다.
+              1) cilium-agent 로그: kubectl --context <ctx> -n kube-system logs -l k8s-app=cilium --since=30m --tail=-1 | grep "forwarded proxied DNS lookup"
+              2) hubble_drop_total 사유별 증가: sum by (reason) (increase(hubble_drop_total[30m]))
+              3) DNS 응답: sum by (rcode) (increase(hubble_dns_responses_total[30m]))
+              4) src_valid_mark: node_sysctl_net_ipv4_conf_all_src_valid_mark (1이면 SrcValidMarkEnabled도 발화한다)
+    - name: node-sysctl
+      rules:
+        # tailscaled는 시작할 때 이 값을 1로 켠다. 1이면 Cilium DNS 프록시 패킷이
+        # IP_LOCAL_SOURCE로 조용히 버려진다(cilium/cilium#48706). 노드의 tailscaled drop-in이 0으로
+        # 되돌리는데, 그 되돌림이 풀린 것을 바로 보이게 한다.
+        - alert: SrcValidMarkEnabled
+          expr: node_sysctl_net_ipv4_conf_all_src_valid_mark == 1
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.instance }}의 src_valid_mark가 1이다"
+            description: "tailscaled가 값을 다시 켰다. FQDN 정책 Pod의 DNS가 간헐적으로 실패할 수 있다. drop-in(10-cilium-srcmark.conf)과 `journalctl -u tailscaled`를 확인한다. Alertmanager가 꺼져 있어 통지는 가지 않는다."
