@@ -17,6 +17,7 @@ GPU runtime, Tailscale 패키지, Join 전 확인까지 자동화한다. EC2 생
 | `00-preflight.yml` | OS·architecture·디스크 여유·메모리·swap·시간 동기화·네트워크와 MTU·필수 binary 상태 **읽기** | 어떤 설정도 변경하지 않음 |
 | `10-base.yml` | Kubernetes host 공통 전제(swap off, kernel module, sysctl)와 containerd·kubeadm·kubelet·kubectl 준비·hold | Tailscale 등록, Join, GPU driver 설치 |
 | `20-tailscale.yml` | Tailscale **패키지 설치와 서비스 활성화까지만** | `tailscale up`, auth key 전달, route 광고·수락, SNAT 설정 |
+| `25-tailscale-podcidr-guard.yml` | Pod 대역(`10.244.0.0/16`)과 오가는 Tailscale UDP 41641을 버리는 nft 규칙·unit 설치. 원인과 절차는 [bootstrap/tailscale-podcidr-guard](../../bootstrap/tailscale-podcidr-guard/README.md) | tailscaled·Cilium 재시작, Cilium 설정·MTU·ACL 변경, nftables 패키지 설치 |
 | `30-gpu-runtime.yml` | R580 driver 판정(없으면 설치, 정상이면 건너뜀, 그 밖이면 중단)과 hold, Container Toolkit 설치, containerd runtime 등록, `nvidia-smi`로 GPU 1장·R580 기준선 확인 | container GPU 실행, device plugin 배포, taint 제거 |
 | `40-join-preflight.yml` | Join 직전 binary·버전(API server 기준 skew 판정)·swap·containerd·API 포트·방화벽·token 존재 여부 **읽기** | `kubeadm join`, token·CA hash 수신·저장 |
 

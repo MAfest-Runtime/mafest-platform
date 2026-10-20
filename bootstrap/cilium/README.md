@@ -138,3 +138,11 @@ AWS GPU 워커가 Tailscale 너머에서 조인하면 다음 접근 경로를 �
 
 현재 실행 순서는 [통합 기획](../../../docs/current-plan.md)을 따른다.
 노드 InternalIP·API 접근·반환 경로를 함께 검증한 뒤 적용 방식을 확정한다.
+
+## Tailscale이 Pod 대역을 연결 경로로 고르는 문제
+
+GPU 노드 tailscaled가 `cilium_host`(Pod 대역) 주소를 연결 후보로 알리면 peer 경로가 공인 IP와
+`10.244.x.x` 사이를 6~7초마다 오가고, 그 위의 TCP 스트림이 1~2분 멈춘다(VXLAN이 Tailscale 위를 지나
+Tailscale 패킷이 자기 터널로 다시 들어가는 순환). Cilium 설정은 바꾸지 않고, 노드에서 Pod 대역과 오가는
+Tailscale UDP를 버려 해결한다. 원인 증거, 적용·검증·되돌리기는
+[tailscale-podcidr-guard](../tailscale-podcidr-guard/README.md)에 있다.

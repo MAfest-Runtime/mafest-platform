@@ -1,0 +1,27 @@
+# Pod 대역(@POD_CIDR@)과 오가는 Tailscale UDP(포트 @TS_PORT@)를 노드에서 버린다.
+#
+# 왜 막는가: GPU 노드 tailscaled는 cilium_host 같은 로컬 인터페이스 주소(Pod 대역)를 연결 후보로
+# 알린다. 상대 노드의 탐색 패킷이 그 주소로 Cilium VXLAN을 타고 도착하면 Pod 대역 경로가
+# 채택된다. 그런데 VXLAN은 Tailscale 위를 지나므로 Tailscale 패킷이 자기 터널로 다시 들어가는
+# 순환이 되고, 경로가 깨져 공인 IP로 돌아가기를 반복한다. 전환 때마다 그 위의 TCP 스트림이
+# 1~2분 멈춘다. 탐색이 실패하면 Pod 대역 경로는 채택되지 않는다.
+#
+# 건드리지 않는 것: Cilium VXLAN(UDP 8472, Tailnet IP끼리), DERP와 공인 경로(목적지가 Pod 대역이
+# 아님), 노드에서 Pod로 가는 헬스체크(UDP @TS_PORT@ 아님), Pod 사이 트래픽(forward 훅이라 대상 아님).
+#
+# 별도 테이블이라 Cilium·kube-proxy가 iptables-nft로 만든 체인의 ACCEPT 순서와 무관하게
+# 적용되고, Cilium이나 tailscaled를 다시 시작해도 남는다.
+#
+# 멱등: add(없으면 생성) → delete → 재생성을 한 번의 `nft -f`로 처리하므로 몇 번 읽어도 규칙은 한 벌이다.
+add table inet tailscale_podcidr_guard
+delete table inet tailscale_podcidr_guard
+table inet tailscale_podcidr_guard {
+	chain output {
+		type filter hook output priority filter; policy accept;
+		udp sport @TS_PORT@ ip daddr @POD_CIDR@ counter drop comment "tailscale->pod-cidr disco/data"
+	}
+	chain input {
+		type filter hook input priority filter; policy accept;
+		udp dport @TS_PORT@ ip saddr @POD_CIDR@ counter drop comment "pod-cidr->tailscale disco/data"
+	}
+}

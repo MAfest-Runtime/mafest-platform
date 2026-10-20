@@ -1,0 +1,141 @@
+---
+# Tailscale이 Pod 대역(10.244.0.0/16) 주소를 연결 경로로 고르지 못하게 하는 nft 규칙을 설치한다.
+#
+# 왜 필요한가: 이 노드의 tailscaled가 cilium_host(Pod 대역) 주소를 연결 후보로 알리면, 상대 노드의
+# 탐색 패킷이 Cilium VXLAN을 타고 도착해 그 경로가 채택된다. VXLAN은 Tailscale 위를 지나므로
+# Tailscale 패킷이 자기 터널로 다시 들어가는 순환이 되고, 경로가 공인 IP와 Pod 대역 사이를
+# 6~7초마다 오가며 그 위의 TCP 스트림이 1~2분 멈춘다. 규칙의 상세 설명은
+# bootstrap/tailscale-podcidr-guard/rules.nft.in 머리말에 있다.
+#
+# 이 playbook이 하지 않는 것: `tailscale up`, Cilium 설정, MTU, ACL, subnet route 변경,
+# tailscaled·Cilium 재시작. 규칙 파일과 unit만 놓고 unit을 켠다.
+#
+# 규칙 원본은 홈 노드용 스크립트와 같은 파일을 쓴다(한 곳만 고치면 되게 한다).
+- name: Install the Tailscale Pod-CIDR path guard
+  hosts: gpu_nodes
+  gather_facts: true
+  become: true
+  any_errors_fatal: true
+
+  vars:
+    # 노드마다 tailscaled 포트가 다르면 inventory에서 덮어쓴다.
+    gpu_tailscale_port: 41641
+    gpu_pod_cidr: 10.244.0.0/16
+    gpu_guard_src: "{{ playbook_dir }}/../../../bootstrap/tailscale-podcidr-guard"
+    gpu_guard_etc: /etc/tailscale-podcidr-guard
+
+  tasks:
+    - name: Ubuntu 24.04 amd64 대상만 변경 허용
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_major_version == '24'
+          - ansible_facts.architecture == 'x86_64'
+        fail_msg: >-
+          검토하지 않은 OS나 architecture에는 규칙을 설치하지 않는다.
+
+    # nftables 패키지를 설치하지 않는다. 설치하면 nftables.service가 켜져 /etc/nftables.conf의
+    # `flush ruleset`이 Cilium이 만든 규칙을 지울 수 있다. 없으면 멈추고 사람이 판단한다.
+    - name: 명령 nft 존재 확인 (읽기)
+      ansible.builtin.command:
+        cmd: /usr/sbin/nft --version
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      register: gpu_guard_nft
+
+    - name: 명령 nft가 없으면 중단
+      ansible.builtin.assert:
+        that:
+          - gpu_guard_nft.rc == 0
+        fail_msg: >-
+          /usr/sbin/nft가 없다. nftables 패키지는 부팅 시 ruleset을 비우는 서비스를 켤 수 있어
+          이 playbook이 설치하지 않는다. 설치 여부는 사람이 판단한다.
+
+    # tailscaled가 실제로 쓰는 UDP 포트가 설정과 다르면 규칙이 아무것도 막지 못한다.
+    # 아직 tailscaled가 포트를 열지 않았다면(등록 전) 비교할 값이 없어 통과시킨다.
+    - name: 실제 tailscaled UDP 수신 포트 읽기
+      ansible.builtin.shell:
+        cmd: set -o pipefail; ss -H -ulnp | grep tailscaled | awk '{print $4}' | sed 's/.*://' | sort -u
+        executable: /bin/bash
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      register: gpu_guard_ports
+
+    - name: 설정한 포트와 실제 포트 대조
+      ansible.builtin.assert:
+        that:
+          - (gpu_guard_ports.stdout_lines | length == 0) or (gpu_tailscale_port | string in gpu_guard_ports.stdout_lines)
+        fail_msg: >-
+          tailscaled가 {{ gpu_guard_ports.stdout_lines }} 포트를 쓰는데 gpu_tailscale_port는
+          {{ gpu_tailscale_port }}이다. inventory의 gpu_tailscale_port를 실제 포트로 맞춘다.
+
+    - name: 규칙 디렉터리 준비
+      ansible.builtin.file:
+        path: "{{ gpu_guard_etc }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 규칙 파일 설치 (포트·대역 치환)
+      ansible.builtin.copy:
+        dest: "{{ gpu_guard_etc }}/rules.nft"
+        owner: root
+        group: root
+        mode: '0644'
+        content: >
+          {{ lookup('ansible.builtin.file', gpu_guard_src ~ '/rules.nft.in')
+          | replace('@TS_PORT@', gpu_tailscale_port | string)
+          | replace('@POD_CIDR@', gpu_pod_cidr) }}
+      register: gpu_guard_rules
+
+    - name: 서비스 unit 설치
+      ansible.builtin.copy:
+        src: "{{ gpu_guard_src }}/tailscale-podcidr-guard.service"
+        dest: /etc/systemd/system/tailscale-podcidr-guard.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: gpu_guard_unit
+
+    - name: 서비스 unit이 바뀐 경우에만 systemd 재적용
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: gpu_guard_unit.changed  # noqa: no-handler -- 같은 실행 안에서 바로 이어 시작해야 한다
+
+    - name: 서비스 unit 활성화와 시작
+      ansible.builtin.systemd_service:
+        name: tailscale-podcidr-guard.service
+        enabled: true
+        state: started
+      register: gpu_guard_service
+
+    # 이미 켜져 있던 unit은 규칙 파일이 바뀐 때만 다시 읽는다. restart가 아니라 reload라
+    # 규칙이 비는 순간이 없다.
+    - name: 규칙 파일이 바뀌었으면 규칙 다시 읽기
+      ansible.builtin.systemd_service:
+        name: tailscale-podcidr-guard.service
+        state: reloaded
+      when: gpu_guard_rules.changed and not gpu_guard_service.changed
+
+    - name: 커널에 규칙이 올라갔는지 읽기
+      ansible.builtin.command:
+        cmd: /usr/sbin/nft list table inet tailscale_podcidr_guard
+      changed_when: false
+      check_mode: false
+      register: gpu_guard_table
+      # --check에서는 규칙이 아직 올라가지 않았으므로 읽지 않는다. 실제 실행에서만 판정한다.
+      when: not ansible_check_mode
+
+    - name: 규칙 단정
+      when: not ansible_check_mode
+      ansible.builtin.assert:
+        that:
+          - "('udp sport ' ~ gpu_tailscale_port) in gpu_guard_table.stdout"
+          - "('udp dport ' ~ gpu_tailscale_port) in gpu_guard_table.stdout"
+          - gpu_pod_cidr in gpu_guard_table.stdout
+        fail_msg: >-
+          tailscale_podcidr_guard 테이블에 기대한 규칙이 없다.
+          `nft list table inet tailscale_podcidr_guard`와 `journalctl -u tailscale-podcidr-guard`를 확인한다.
