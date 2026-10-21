@@ -10,7 +10,8 @@ persona-vllm-model-seed Job이 vLLM image(huggingface_hub 포함) 안에서 실�
    - 파일 목록이 upstream과 정확히 같다(빠진 파일·남는 파일 모두 실패).
    - 파일마다 크기가 같다.
    - LFS 파일(가중치·tokenizer.json)은 sha256, 나머지는 git blob sha1이 같다.
-   - 필수 파일(config·tokenizer·weight index)이 있고, index가 가리키는 shard가 모두 있다.
+   - 필수 파일(config·tokenizer)과 가중치가 있다. 가중치는 weight index가 있으면 index가 가리키는 shard가
+     모두 있어야 하고, index가 없는 단일 파일 체크포인트(예: 공식 FP8)는 `model.safetensors`가 있어야 한다.
 4. 통과하면 manifest와 완료 marker를 쓰고 최종 경로(`/models/<model id>/<revision>`)로 rename한다.
    같은 파일시스템 안의 rename이라 "절반만 받은 최종 경로"가 생기지 않는다.
 
@@ -48,8 +49,11 @@ REQUIRED_FILES = (
     "generation_config.json",
     "tokenizer.json",
     "tokenizer_config.json",
-    "model.safetensors.index.json",
 )
+# 가중치는 둘 중 하나로 판정한다. shard가 여럿인 체크포인트(BF16)는 index를 두고, 5GiB 안팎의 공식 FP8처럼
+# 한 파일이면 index 없이 `model.safetensors` 하나다. index가 있으면 항상 그쪽 기준(shard 존재)이 우선한다.
+WEIGHT_INDEX_NAME = "model.safetensors.index.json"
+SINGLE_WEIGHT_NAME = "model.safetensors"
 CHUNK_BYTES = 8 * 1024 * 1024
 
 
@@ -126,6 +130,8 @@ def verify_directory(root: Path, expected: dict[str, ExpectedFile]) -> list[str]
     missing_required = [name for name in REQUIRED_FILES if name not in expected]
     if missing_required:
         problems.append(f"upstream에 필수 파일이 없다: {missing_required}")
+    if WEIGHT_INDEX_NAME not in expected and SINGLE_WEIGHT_NAME not in expected:
+        problems.append(f"upstream에 가중치가 없다: {WEIGHT_INDEX_NAME} 또는 {SINGLE_WEIGHT_NAME}")
 
     present = local_files(root)
     for name in sorted(set(expected) - present):
@@ -145,7 +151,7 @@ def verify_directory(root: Path, expected: dict[str, ExpectedFile]) -> list[str]
         if spec.blob_sha1 is not None and git_blob_sha1(path) != spec.blob_sha1:
             problems.append(f"git blob sha1이 다르다: {name}")
 
-    index_path = root / "model.safetensors.index.json"
+    index_path = root / WEIGHT_INDEX_NAME
     if index_path.is_file():
         try:
             shards = set(json.loads(index_path.read_text())["weight_map"].values())

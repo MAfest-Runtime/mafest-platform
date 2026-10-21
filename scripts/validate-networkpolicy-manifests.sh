@@ -42,7 +42,7 @@ kubectl kustomize "$repo_dir/kustomize/overlays/prod/mafest-db-netpol"       > "
 # mafest-app(API·웹·적재 Job) — mafest-app-netpol Application(초안). Application이 초안이어도 정책 모양은 지금 검사한다.
 kubectl kustomize "$repo_dir/kustomize/overlays/prod/mafest-app-netpol"      > "$mafest_app_file"
 
-ruby -ryaml - "$maintenance_file" "$edge_file" "$traefik_file" "$inference_file" "$mafest_data_file" "$mafest_app_file" <<'RUBY'
+ruby -ryaml - "$maintenance_file" "$edge_file" "$traefik_file" "$inference_file" "$mafest_data_file" "$mafest_app_file" "$repo_dir" <<'RUBY'
 # encoding: utf-8
 #
 # heredoc로 넘긴 Ruby 소스는 파일이 아니라 stdin이라, 로케일이 UTF-8이 아니면(LC_ALL=C,
@@ -53,7 +53,7 @@ ruby -ryaml - "$maintenance_file" "$edge_file" "$traefik_file" "$inference_file"
 # 외부 매니페스트의 인코딩이다.
 Encoding.default_external = Encoding::UTF_8
 
-maintenance_path, edge_path, traefik_path, inference_path, mafest_data_path, mafest_app_path = ARGV
+maintenance_path, edge_path, traefik_path, inference_path, mafest_data_path, mafest_app_path, repo_root = ARGV
 
 def load(path)
   YAML.load_stream(File.read(path)).compact
@@ -374,6 +374,37 @@ mafest_app.each do |item|
     raise "[안전] mafest-app egress에 ipBlock을 쓰지 않는다" if (rule["to"] || []).any? { |peer| peer.key?("ipBlock") }
     raise "[안전] mafest-app egress 규칙에 대상(to)이나 포트가 비어 있다 — 비우면 모든 대상·포트다" if (rule["to"] || []).empty? || (rule["ports"] || []).empty?
   end
+end
+
+# --- 모델 seed 관측 정책 (상시 정책이 아니다) -----------------------------------
+# allow-model-seed-observe.yaml은 모델 다운로드 호스트를 관측하는 동안만 사람이 `kubectl apply -f`로
+# 올린다. 그래서 (1) 어떤 kustomization·Argo 선언에도 들어 있으면 안 되고, (2) 추측한 allowlist가
+# 아니도록 HTTPS 대상(toFQDNs)에 와일드카드가 없어야 한다. DNS의 `matchPattern "*"`은 HTTPS를 열지 않고
+# 질의 이름을 관측하려는 것이라 허용하는 유일한 와일드카드다.
+observe_relative = "kustomize/base/networkpolicy/persona-inference/allow-model-seed-observe.yaml"
+observe = YAML.load_file(File.join(repo_root, observe_relative))
+raise "[안전] 관측 정책 kind가 CiliumNetworkPolicy가 아니다" unless observe["kind"] == "CiliumNetworkPolicy"
+raise "[안전] 관측 정책은 seed Pod(persona-vllm-model-seed)만 고른다" unless
+  observe.dig("spec", "endpointSelector", "matchLabels") == { "app.kubernetes.io/name" => "persona-vllm-model-seed" }
+observe_egress = observe.dig("spec", "egress") || []
+fqdn_rules = observe_egress.select { |rule| rule.key?("toFQDNs") }
+raise "[안전] 관측 정책에 toFQDNs 규칙이 정확히 하나여야 한다" unless fqdn_rules.length == 1
+names = fqdn_rules.first["toFQDNs"]
+raise "[안전] 관측 정책 toFQDNs에는 matchName만 쓴다(matchPattern·와일드카드 금지): #{names.inspect}" unless
+  names.all? { |entry| entry.keys == ["matchName"] && !entry["matchName"].to_s.include?("*") && !entry["matchName"].to_s.empty? }
+raise "[안전] 관측 정책 HTTPS 대상은 TCP 443뿐이다" unless
+  fqdn_rules.first["toPorts"] == [{ "ports" => [{ "port" => "443", "protocol" => "TCP" }] }]
+dns_rules = observe_egress.select { |rule| rule.key?("toEndpoints") }
+raise "[안전] 관측 정책의 DNS 규칙이 정확히 하나여야 한다" unless dns_rules.length == 1
+raise "[안전] 관측 정책 DNS는 kube-system kube-dns 53과 L7 matchPattern \"*\"만 허용한다" unless
+  dns_rules.first["toEndpoints"] == [{ "matchLabels" => { "k8s:io.kubernetes.pod.namespace" => "kube-system", "k8s-app" => "kube-dns" } }] &&
+  dns_rules.first["toPorts"] == [{ "ports" => [{ "port" => "53", "protocol" => "ANY" }], "rules" => { "dns" => [{ "matchPattern" => "*" }] } }]
+raise "[안전] 관측 정책에 toFQDNs·toEndpoints 밖의 egress 대상(toCIDR·toEntities·ipBlock 등)이 있다" unless
+  observe_egress.all? { |rule| rule.key?("toFQDNs") || rule.key?("toEndpoints") } &&
+  observe_egress.none? { |rule| rule.keys.any? { |key| %w[toCIDR toCIDRSet toEntities toServices toGroups].include?(key) } }
+Dir.glob(File.join(repo_root, "{kustomize,argocd}", "**", "*.{yaml,yml}")).sort.each do |path|
+  next if path.end_with?("allow-model-seed-observe.yaml")
+  raise "[안전] 관측 정책을 다른 선언이 참조한다(상시 적용 금지): #{path.sub(repo_root + '/', '')}" if File.read(path).include?("allow-model-seed-observe")
 end
 
 puts "networkpolicy(persona-app 준비 중 페이지·persona-edge·traefik·mafest-data·mafest-app·persona-inference) 렌더와 매니페스트 정책 검사 통과"

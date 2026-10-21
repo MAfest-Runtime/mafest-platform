@@ -1,0 +1,58 @@
+# 모델 다운로드 호스트 **관측용** 임시 정책 — 어떤 kustomization의 resources에도 넣지 않는다.
+#
+# 이 파일은 `.yaml`이지만 일부러 배선하지 않았다. kustomization.yaml에 넣으면 Argo Sync나
+# `kubectl apply -k`로 상시 적용된다. 사용자가 관측 단계에서만 직접 올리고 끝나면 지운다.
+#
+#   kubectl --context <context> apply -f kustomize/base/networkpolicy/persona-inference/allow-model-seed-observe.yaml
+#   (관측이 끝나면)
+#   kubectl --context <context> -n persona-inference delete ciliumnetworkpolicy allow-model-seed-observe
+#
+# 목적: seed Pod가 어느 호스트를 질의하고 접속하는지 **사실로** 기록한다. 추측한 allowlist를 먼저
+# 만들면 너무 좁아 seed가 실패하거나, 넉넉히 열어 놓고 FQDN으로 제한했다고 잘못 말하게 된다
+# (network-policy-fqdn.yaml.draft 머리말 참고).
+#
+# 이 정책이 하는 일
+# - DNS: kube-dns 53을 열고 L7 DNS 규칙 `matchPattern: "*"`을 둔다. 질의를 허용하되 Cilium DNS
+#   프록시가 **모든 질의 이름을 보게** 해 Hubble 흐름과 `cilium-dbg fqdn cache list`에 남기는 것이
+#   목적이다. 이 규칙은 HTTPS 접속을 열지 않는다.
+# - HTTPS: Hugging Face Hub의 문서화된 기본 endpoint인 huggingface.co 하나만 연다. 파일 CDN과 저장
+#   백엔드 호스트는 문서로 보장되지 않으므로 여기에 적지 않는다. seed가 막히면 DNS에 남은 질의 이름을
+#   보고 관측한 것만 matchName으로 더한다.
+#
+# 하지 않는 것: matchPattern으로 HTTPS 대상을 여는 것, 0.0.0.0/0:443. toFQDNs에는 와일드카드를 쓰지 않는다.
+#
+# 모양은 persona-edge/network-policy-fqdn.yaml의 allow-ddns-fqdn을 따른다. 필수 두 가지:
+# - toEndpoints 안에서는 `k8s:io.kubernetes.pod.namespace` 접두어를 쓴다.
+# - L7 DNS 규칙이 있어야 Cilium이 DNS 응답을 스누핑해 FQDN→IP 매핑을 만든다. allow-model-seed-dns의
+#   표준 DNS 허용만으로는 toFQDNs가 동작하지 않는다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-model-seed-observe
+  namespace: persona-inference
+  labels:
+    app.kubernetes.io/part-of: persona-platform
+    app.kubernetes.io/component: networkpolicy
+    persona.runtime/purpose: observe-only
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: persona-vllm-model-seed
+  egress:
+    - toFQDNs:
+        - matchName: huggingface.co
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"

@@ -1,0 +1,75 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# FP8-B 실험용 모델 seed: Qwen/Qwen3-4B-Instruct-2507-FP8 @ 8591804를 기존 모델 cache PVC에 받는다.
+#
+# 모델별 seed overlay의 기준 모양이다. 다른 모델(예: INT4 AWQ)은 이 디렉터리를 복사해 아래
+# 이름·MODEL_ID·MODEL_REVISION·label만 바꾸면 된다.
+#
+# **이 overlay를 가리키는 Argo Application이 없다.** 사람이 control-plane에서 `kubectl apply -k`로
+# 적용한다(절차는 bootstrap/persona-model-seed/README.md). 다운로드 호스트를 관측해 채우기 전에는
+# 이 Job이 Hugging Face에 닿지 못한다 — persona-inference가 default-deny이기 때문이다.
+#
+# 기존 BF16 seed(kustomize/overlays/prod/persona-model-cache)는 건드리지 않는다.
+# - Namespace·PVC는 이미 있으므로 이 overlay의 렌더에서 뺀다(다시 만들지 않는다).
+# - seed 스크립트 ConfigMap은 base의 generator를 그대로 쓴다. 내용이 같으면 이름(hash)도 같아
+#   BF16 overlay와 같은 ConfigMap을 가리킨다.
+# - Job 이름을 모델별로 달리해 기존 Job과 충돌하지 않게 한다. Job은 불변이라 같은 이름으로는 다른 모델을
+#   받을 수 없다.
+namespace: persona-inference
+resources:
+  - ../../../base/persona-model-cache
+patches:
+  - target:
+      kind: Namespace
+      name: persona-inference
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: persona-inference
+  - target:
+      kind: PersistentVolumeClaim
+      name: persona-vllm-model-cache
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: persona-vllm-model-cache
+  # 모델과 revision만 바꾼다. Pod label app.kubernetes.io/name은 base 그대로 둔다 — 기존
+  # allow-model-seed-dns와 앞으로의 FQDN 정책이 이 label로 seed Pod를 고른다. Job을 구분하는
+  # label은 persona.runtime/model로 따로 붙인다.
+  - target:
+      kind: Job
+      name: persona-vllm-model-seed
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: persona-vllm-model-seed
+        labels:
+          persona.runtime/model: qwen3-4b-instruct-2507-fp8
+      spec:
+        # 공식 FP8 체크포인트는 약 4.85GiB다. 5MB/s로도 20분 안에 끝나므로 BF16(7.5GiB, 7200초)보다
+        # 짧게 둔다. 허용되지 않은 호스트로 막혀 매달린 시도가 관측 반복을 오래 붙잡지 않게 한다.
+        activeDeadlineSeconds: 3600
+        template:
+          metadata:
+            labels:
+              persona.runtime/model: qwen3-4b-instruct-2507-fp8
+          spec:
+            containers:
+              - name: seed
+                env:
+                  - name: MODEL_ID
+                    value: Qwen/Qwen3-4B-Instruct-2507-FP8
+                  - name: MODEL_REVISION
+                    value: 8591804019c8b22094c3b5b4454e0edc05dffc98
+  - target:
+      kind: Job
+      name: persona-vllm-model-seed
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: persona-vllm-model-seed-qwen3-4b-fp8

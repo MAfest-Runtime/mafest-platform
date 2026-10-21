@@ -24,6 +24,7 @@ MFD = "kustomize/base/networkpolicy/mafest-data/network-policy.yaml"
 TRAEFIK = "kustomize/base/networkpolicy/traefik/network-policy.yaml"
 INF = "kustomize/base/networkpolicy/persona-inference/network-policy.yaml"
 MAPP = "kustomize/base/networkpolicy/mafest-app/network-policy.yaml"
+OBSERVE = "kustomize/base/networkpolicy/persona-inference/allow-model-seed-observe.yaml"
 
 def ns_peer(name)
   { "namespaceSelector" => { "matchLabels" => { "kubernetes.io/metadata.name" => name } } }
@@ -98,6 +99,15 @@ cases = [
    "default-deny: apply-phase label이 deny가 아니다"],
   [INF, "allow-vllm-metrics", ->(p) { p.dig("metadata", "labels").delete("persona.runtime/apply-phase") },
    "allow-vllm-metrics: apply-phase label이 allow가 아니다"],
+  # 모델 seed 관측 정책 — HTTPS 대상은 관측한 matchName만, 와일드카드·CIDR 금지
+  [OBSERVE, "allow-model-seed-observe", ->(p) { p.dig("spec", "egress", 0, "toFQDNs") << { "matchPattern" => "*.huggingface.co" } },
+   "toFQDNs에는 matchName만 쓴다"],
+  [OBSERVE, "allow-model-seed-observe", ->(p) { p.dig("spec", "egress", 0, "toFQDNs") << { "matchName" => "*.hf.co" } },
+   "toFQDNs에는 matchName만 쓴다"],
+  [OBSERVE, "allow-model-seed-observe", ->(p) { p.dig("spec", "egress") << { "toCIDR" => ["0.0.0.0/0"], "toPorts" => [{ "ports" => [{ "port" => "443", "protocol" => "TCP" }] }] } },
+   "toFQDNs·toEndpoints 밖의 egress 대상"],
+  [OBSERVE, "allow-model-seed-observe", ->(p) { p.dig("spec", "egress", 1, "toPorts", 0).delete("rules") },
+   "DNS는 kube-system kube-dns 53과 L7 matchPattern"],
 ]
 
 cases.each do |relative_path, policy_name, mutate, message|
