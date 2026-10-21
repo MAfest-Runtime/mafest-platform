@@ -117,11 +117,21 @@ spec:
             - --served-model-name
             - Qwen/Qwen3-4B-Instruct-2507
             # 입력+출력 16384 토큰. 기본값(모델 context 262144)은 L4의 KV cache(약 6.5만~7만 토큰)에
-            # 들어가지 않아 기동에 실패한다. 추론 최적화 기준선(B0)에서 기본값과 다르게 남기는 유일한 인자다.
+            # 들어가지 않아 기동에 실패한다. 추론 최적화 기준선(B0)에서 기본값과 다르게 두는 인자는 이것과 아래 --attention-backend 둘이다.
             # 8192 run(phase2-20261006T074432Z)에서 경계 채권·펀드(입력+출력 14,477·15,935)가 400이어서
             # 16384로 올렸다. 기동·KV 여유는 사람이 적용한 뒤 실측으로 확인한다.
             - --max-model-len
             - "16384"
+            # attention 백엔드를 기본 선택(FLASH_ATTN) 대신 FLASHINFER로 고정한다. 같은 녹화 요청 80건을
+            # 동시 1·2·4·8로 다시 보낸 B0 실측(vLLM 0.29.0, L4)에서 동시 1~2는 같고, 동시 4·8은 처리량이
+            # 약 4~11% 늘고 TPOT p50이 조금 줄었다.
+            # 대가: 같은 질문을 반복했을 때 해석 JSON이 달라지는 문항이 1/74에서 3/74로 늘었다.
+            # 답변 문항 수와 오류 수는 같았다.
+            # 측정 방법과 도구는 ops-lab의 experiments/LLM-02-baseline에 있다(결과 파일은 커밋하지 않는다).
+            # vLLM을 올릴 때 이 선택이 여전히 이득인지 다시 잰다. 0.29.0에서 이 인자는 `vllm serve --help=all`의
+            # AttentionConfig 절에 있고, 환경변수 VLLM_ATTENTION_BACKEND는 이 버전에 없다.
+            - --attention-backend
+            - FLASHINFER
             # 요청 내용을 로그에 남기지 않는다. vLLM v0.29.0에는 --disable-log-requests가 없고(모르는
             # 인자는 기동 실패) --enable-log-requests(기본 off)만 있으므로, 꺼짐을 명시한다.
             - --no-enable-log-requests
