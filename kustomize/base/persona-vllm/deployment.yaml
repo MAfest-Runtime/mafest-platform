@@ -99,6 +99,43 @@ spec:
             - name: model-cache
               mountPath: /models
               readOnly: true
+        # 컴파일 cache 디렉터리에 non-root 10001이 쓸 수 있는지 확인한다. subPath 디렉터리는 kubelet이 처음
+        # 만들 때 소유 때문에 쓰기가 막힐 수 있다(fsGroup이 적용되는 저장소인지에 달렸다). 못 쓰면 vLLM을
+        # 띄우기 전에 여기서 멈춰, 컴파일 도중의 알기 어려운 오류 대신 원인을 바로 보이게 한다.
+        # 확인만 하고 GPU를 쓰지 않는다.
+        - name: prepare-compile-cache
+          image: vllm/vllm-openai@sha256:51b1042786c1bb7ab640fd05e4a2b19ae41662959387cc07e1c3106ae2a851b8
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              dir=/vllm-cache
+              touch "$dir/.write-check" || { echo "compile cache not writable: $dir" >&2; exit 1; }
+              rm -f "$dir/.write-check"
+              echo "compile cache writable"
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: void
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: vllm-compile-cache
+              mountPath: /vllm-cache
+              subPath: vllm-cache
       containers:
         - name: vllm
           image: vllm/vllm-openai@sha256:51b1042786c1bb7ab640fd05e4a2b19ae41662959387cc07e1c3106ae2a851b8
@@ -150,8 +187,12 @@ spec:
               value: /tmp
             - name: XDG_CACHE_HOME
               value: /tmp/.cache
+            # torch.compile 결과를 재시작 뒤에도 쓰도록 모델 PVC의 하위 경로(vllm-cache)에 둔다. emptyDir에 두면
+            # 재시작마다 컴파일을 다시 해서 기동이 길어진다(FP8-B 기준 컴파일 41초, 엔진 준비 63초 중).
+            # cache 이름에는 vLLM 버전과 설정의 해시가 들어가 섞여도 안전하다. 그래도 vLLM 이미지를 바꿀 때는
+            # 이 하위 경로를 지워도 된다(다시 컴파일할 뿐이다).
             - name: VLLM_CACHE_ROOT
-              value: /tmp/vllm-cache
+              value: /vllm-cache
           ports:
             - name: http
               containerPort: 8000
@@ -203,13 +244,22 @@ spec:
               mountPath: /tmp
             - name: dshm
               mountPath: /dev/shm
+            # 모델 PVC의 vllm-cache 하위 경로만 쓰기로 mount한다. 모델 디렉터리(/models)는 위처럼 계속 읽기 전용이다.
+            - name: vllm-compile-cache
+              mountPath: /vllm-cache
+              subPath: vllm-cache
       volumes:
         # seed Job이 채운 cache. 서빙 중 쓰지 않는다.
         - name: model-cache
           persistentVolumeClaim:
             claimName: persona-vllm-model-cache
             readOnly: true
-        # torch·vLLM 컴파일 cache와 임시 파일.
+        # 같은 PVC를 쓰기 가능한 volume으로 한 번 더 둔다. /models용 volume은 volume 단위로 readOnly라서 그
+        # volume의 mount를 쓰기로 바꿀 수 없다. 이 volume은 vllm-cache 하위 경로로만 mount한다.
+        - name: vllm-compile-cache
+          persistentVolumeClaim:
+            claimName: persona-vllm-model-cache
+        # 임시 파일과 HOME·XDG cache(컴파일 cache는 위 PVC로 옮겼다).
         - name: tmp
           emptyDir:
             sizeLimit: 8Gi
