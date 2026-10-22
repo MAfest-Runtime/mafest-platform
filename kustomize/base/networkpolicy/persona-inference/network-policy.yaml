@@ -158,9 +158,8 @@ spec:
 # egress가 vLLM에도 열린다. 둘의 라벨을 나누는 것이 그 사고를 구조적으로 막는다.
 #
 # 이 정책은 seed Pod의 Egress를 고르므로, default-deny 없이 이것만 적용돼도 seed의 송출은
-# CoreDNS 53으로 제한되고 모델 호스트(HTTPS)에 닿지 못한다. seed를 다시 실행하려면 관측한
-# FQDN만 여는 별도 다운로드 허용 정책이 먼저 필요하다(network-policy-fqdn.yaml.draft, 이 base에
-# 배선하지 않았다).
+# CoreDNS 53으로 제한되고 모델 호스트(HTTPS)에 닿지 못한다. seed가 외부 HTTPS에
+# 닿는 길은 관측한 FQDN만 여는 별도 정책(network-policy-fqdn.yaml)뿐이다.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

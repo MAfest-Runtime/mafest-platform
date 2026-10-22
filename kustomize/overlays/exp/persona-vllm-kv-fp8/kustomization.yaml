@@ -1,7 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# KV cache FP8 실험: 가중치는 BF16 그대로 두고 KV cache만 FP8로 저장한다(`--kv-cache-dtype fp8`).
+# KV cache FP8 실험: KV cache만 FP8로 저장한다(`--kv-cache-dtype fp8`).
 # KV cache 토큰 수(동시성 여유)가 늘어나는지와 품질 변화를 본다.
+#
+# 측정한 조합은 BF16 가중치 + FLASHINFER였다. prod가 FP8-B + CPU n-gram으로 바뀐 뒤에는 이 overlay가
+# 그 위에 인자만 덧붙이므로, 이 조합으로는 측정한 적이 없다. 쓰기 전에 다시 잰다.
 #
 # **운영 기본값이 아니다.** prod overlay는 바꾸지 않는다.
 #

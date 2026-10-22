@@ -7,9 +7,8 @@
 # - 크기, LFS sha256, git blob sha1이 같다.
 # - 필수 파일과 weight index shard가 있다.
 #
-# 다운로드 FQDN은 아직 정하지 않았다. 첫 seed는 persona-inference NetworkPolicy가 적용되기 전에
-# 실행되므로 egress가 막혀 있지 않다. 그 실행에서 실제 질의한 호스트를 Hubble·DNS 로그로
-# 기록한 뒤에 network-policy-fqdn.yaml.draft를 채운다. 추측한 allowlist를 먼저 만들지 않는다.
+# 다운로드 호스트는 관측한 세 개만 network-policy-fqdn.yaml로 연다. 호스트 이름이 바뀌면 이 Job이 막히며,
+# 다시 관측하는 절차는 bootstrap/persona-model-seed/README.md에 있다. 추측한 allowlist를 만들지 않는다.
 #
 # Job은 불변이다. 다시 실행하려면 Job을 지우고 적용한다. 이미 완료된 cache는 다시 받지 않고
 # 재검증만 한다.

@@ -25,6 +25,7 @@ TRAEFIK = "kustomize/base/networkpolicy/traefik/network-policy.yaml"
 INF = "kustomize/base/networkpolicy/persona-inference/network-policy.yaml"
 MAPP = "kustomize/base/networkpolicy/mafest-app/network-policy.yaml"
 OBSERVE = "kustomize/base/networkpolicy/persona-inference/allow-model-seed-observe.yaml"
+SEED_FQDN = "kustomize/base/networkpolicy/persona-inference/network-policy-fqdn.yaml"
 
 def ns_peer(name)
   { "namespaceSelector" => { "matchLabels" => { "kubernetes.io/metadata.name" => name } } }
@@ -108,6 +109,11 @@ cases = [
    "toFQDNs·toEndpoints 밖의 egress 대상"],
   [OBSERVE, "allow-model-seed-observe", ->(p) { p.dig("spec", "egress", 1, "toPorts", 0).delete("rules") },
    "DNS는 kube-system kube-dns 53과 L7 matchPattern"],
+  # seed 상시 FQDN 정책 — 관측한 호스트 세 개뿐, 와일드카드·CIDR 금지
+  [SEED_FQDN, "allow-model-seed-fqdn", ->(p) { p.dig("spec", "egress", 0, "toFQDNs") << { "matchPattern" => "*.hf.co" } },
+   "toFQDNs에는 matchName만 쓴다"],
+  [SEED_FQDN, "allow-model-seed-fqdn", ->(p) { p.dig("spec", "egress") << { "toCIDR" => ["0.0.0.0/0"], "toPorts" => [{ "ports" => [{ "port" => "443", "protocol" => "TCP" }] }] } },
+   "toFQDNs·toEndpoints 밖의 egress 대상"],
 ]
 
 cases.each do |relative_path, policy_name, mutate, message|

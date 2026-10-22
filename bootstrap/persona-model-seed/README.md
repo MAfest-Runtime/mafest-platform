@@ -1,6 +1,6 @@
-# 모델별 seed와 FP8-B 실험 절차
+# 모델별 seed와 FP8-B 운영 절차
 
-Qwen 공식 FP8 체크포인트로 FP8-B 실험을 하기 위한 사용자 절차다. 이 저장소의 변경은 manifest까지이고,
+Qwen 공식 FP8 체크포인트를 받아 운영 vLLM에 쓰기 위한 사용자 절차다. 이 저장소의 변경은 manifest까지이고,
 적용·Job 실행·관측은 사용자가 한다. 모든 `kubectl`에 `--context`를 붙인다. GPU 노드가 켜져 있어야 한다
 (모델 cache PVC가 GPU 노드 로컬 디스크다).
 
@@ -21,7 +21,7 @@ kubectl --context $CTX get nodes          # 대상 클러스터와 persona-gpu-0
 
 - **weight index가 없다.** 이 체크포인트는 `model.safetensors.index.json` 없이 단일 파일이다. 그래서 `seed_model.py`는
   index가 있으면 기존대로(index와 shard 존재), 없으면 `model.safetensors`를 필수로 확인하도록 일반화했고,
-  FP8-B overlay의 init container도 index 대신 `model.safetensors`를 확인한다. BF16 체크포인트는 index가 있어 판정이 같다.
+  운영 vLLM의 init container도 index 대신 `model.safetensors`를 확인한다. BF16 체크포인트는 index가 있어 판정이 같다.
 - **BF16 seed overlay를 다시 apply하지 않는다.** 스크립트가 바뀌어 ConfigMap 이름의 hash가 바뀌었고, 이미 끝난 BF16 Job은
   옛 ConfigMap을 가리킨다. Job은 불변이라 `kustomize/overlays/prod/persona-model-cache`를 다시 apply하면 오류가 난다.
   BF16 cache와 서빙에는 영향이 없다. BF16을 다시 검증해야 하면 Job을 지우고 적용한다.
@@ -109,36 +109,38 @@ kubectl --context $CTX -n persona-inference exec deploy/persona-vllm -c vllm -- 
 kubectl --context $CTX -n persona-inference delete ciliumnetworkpolicy allow-model-seed-observe
 ```
 
-4)에서 기록한 호스트 목록은 2단계 PR(`network-policy-fqdn.yaml.draft`를 채워 상시 정책으로 바꾸는 작업)의 입력이다.
-이번 변경은 그 초안을 채우지 않는다.
+4)에서 기록한 호스트 목록은 `kustomize/base/networkpolicy/persona-inference/network-policy-fqdn.yaml`의 `matchName`에 들어간다
+(상시 정책, `persona-inference-netpol` overlay로 적용). CDN 호스트 이름이 바뀌어 seed가 막히면 이 절차로 다시 관측한다.
 
-## 7) FP8-B 실험
+## 7) FP8-B 운영 전환과 확인
+
+운영 vLLM(`kustomize/overlays/prod/persona-vllm`)은 FP8-B(이 체크포인트) + CPU n-gram 추측 디코딩이다.
+seed가 끝나 marker가 있어야 init container가 통과한다.
 
 ```bash
-kubectl --context $CTX diff -k kustomize/overlays/exp/persona-vllm-fp8-block
-kubectl --context $CTX apply -k kustomize/overlays/exp/persona-vllm-fp8-block
+kubectl --context $CTX diff -k kustomize/overlays/prod/persona-vllm
+kubectl --context $CTX apply -k kustomize/overlays/prod/persona-vllm
 kubectl --context $CTX -n persona-inference rollout status deploy/persona-vllm
 KUBE_CONTEXT=$CTX bash vllm-baseline-inspect.sh      # persona-ops-lab experiments/LLM-02-baseline
 ```
 
-- diff는 모델 경로, init container의 `dir=`·`revision` 검사, 필수 파일 목록만 바뀌어야 한다. `--quantization`은 없다.
-- 기동 로그에서 FP8 커널 선택을 확인한다. Ada(sm_89)에서 어떤 커널이 선택되는지는 소스만으로 단정하지 못했다.
-  Marlin이 선택되면 가중치만 FP8로 저장하고 연산은 상위 정밀도로 하므로, 이 실험은 "FP8 연산"이 아니라
-  "가중치 크기와 읽기 대역 절감"을 보는 것이 된다.
+- diff는 모델 경로, init container의 `dir=`·`revision` 검사·필수 파일, `--speculative-config` 두 줄만 바뀌어야 한다.
+- 기동 로그에서 커널·추측 디코딩·KV cache를 확인한다. 예상: `MarlinFP8ScaledMMLinearKernel`(L4에서는 가중치만 FP8),
+  async scheduling 비활성 경고, `method='ngram'`, KV cache 약 98,800토큰.
 
 ```bash
-kubectl --context $CTX -n persona-inference logs deploy/persona-vllm -c vllm | grep -iE "Selected .* for |quantization|fp8"
+kubectl --context $CTX -n persona-inference logs deploy/persona-vllm -c vllm | grep -i -E "Selected .* for |async|specul|KV cache size"
 ```
 
-- 품질 평가·탐침·재전송은 ops-lab `experiments/LLM-02-baseline/README.md` 절차를 따르고 출력 폴더는 `fp8b-*`로 한다.
-- 같은 방식의 다른 실험 overlay: `kustomize/overlays/exp/persona-vllm-fp8-dynamic`(FP8-A 재현),
-  `kustomize/overlays/exp/persona-vllm-kv-fp8`(KV cache FP8).
+- 품질 평가·탐침·재전송은 ops-lab `experiments/LLM-02-baseline/README.md` 절차를 따른다.
+- 실험 overlay: `kustomize/overlays/exp/persona-vllm-bf16`(BF16 비교·되돌리기),
+  `kustomize/overlays/exp/persona-vllm-kv-fp8`(KV cache FP8, 현재 prod 위에서는 측정한 적 없는 조합).
 
 ## 8) 되돌리기
 
 ```bash
-kubectl --context $CTX apply -k kustomize/overlays/prod/persona-vllm
+kubectl --context $CTX apply -k kustomize/overlays/exp/persona-vllm-bf16
 kubectl --context $CTX -n persona-inference rollout status deploy/persona-vllm
 ```
 
-실험 overlay는 운영 기본값이 아니다. FP8 체크포인트는 PVC에 남아도 BF16 서빙에 영향이 없다.
+BF16 cache는 PVC에 그대로 있다. BF16으로 되돌려도 FP8 체크포인트는 PVC에 남아 서빙에 영향이 없다.

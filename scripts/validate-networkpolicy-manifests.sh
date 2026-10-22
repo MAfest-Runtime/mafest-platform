@@ -297,10 +297,9 @@ inference.select { |item| item["kind"] == "NetworkPolicy" }.each do |policy|
   raise "[안전] persona-inference #{name}: apply-phase label이 #{expected_phase}가 아니다(실제: #{actual_phase.inspect})" unless actual_phase == expected_phase
 end
 
-# 이 namespace에 외부로 나가는 HTTPS 허용이 들어오지 않았는지 본다. 모델 다운로드 호스트가
-# 아직 관측되지 않아 FQDN 정책은 일부러 배선하지 않았다(network-policy-fqdn.yaml.draft).
-# 그 사이에 누가 ipBlock이나 와일드카드로 443을 열면 여기서 걸린다.
-inference.each do |item|
+# 표준 NetworkPolicy로는 외부 HTTPS(443)를 열지 않는다. 외부로 나가는 길은 아래 CiliumNetworkPolicy의
+# 관측한 FQDN 세 개뿐이다. 누가 ipBlock이나 와일드카드로 443을 열면 여기서 걸린다.
+inference.select { |item| item["kind"] == "NetworkPolicy" }.each do |item|
   ports = (item.dig("spec", "egress") || []).flat_map { |rule| rule_ports(rule) }
   raise "[안전] persona-inference에 443 egress가 생겼다 — 모델 호스트는 관측 후 FQDN으로만 연다" if ports.any? { |(_proto, port)| port == 443 || port == "443" }
   (item.dig("spec", "egress") || []).each do |rule|
@@ -310,6 +309,32 @@ inference.each do |item|
     raise "[안전] persona-inference egress 규칙에 포트가 없다 — 비우면 모든 포트다" if (rule["ports"] || []).empty?
   end
 end
+
+# seed Job의 상시 FQDN 정책(CiliumNetworkPolicy). 표준 NetworkPolicy와 모양이 달라 따로 본다.
+# 허용은 관측한 호스트 matchName과 kube-dns 질의뿐이고, 와일드카드·CIDR·entity는 쓰지 않는다.
+SEED_FQDN_HOSTS = %w[cas-server.xethub.hf.co huggingface.co us.aws.cdn.hf.co].freeze
+seed_fqdn = inference.find { |item| item["kind"] == "CiliumNetworkPolicy" && item.dig("metadata", "name") == "allow-model-seed-fqdn" }
+raise "[안전] persona-inference에 allow-model-seed-fqdn(CiliumNetworkPolicy)이 없다" unless seed_fqdn
+check_sync_wave(seed_fqdn, "0", "persona-inference allow-model-seed-fqdn")
+raise "[안전] allow-model-seed-fqdn은 seed Pod(persona-vllm-model-seed)만 고른다" unless seed_fqdn.dig("spec", "endpointSelector", "matchLabels") == seed_label
+seed_egress = seed_fqdn.dig("spec", "egress") || []
+seed_fqdn_rules = seed_egress.select { |rule| rule.key?("toFQDNs") }
+raise "[안전] allow-model-seed-fqdn의 toFQDNs 규칙이 정확히 하나여야 한다" unless seed_fqdn_rules.length == 1
+seed_hosts = seed_fqdn_rules.first["toFQDNs"]
+raise "[안전] allow-model-seed-fqdn toFQDNs에는 matchName만 쓴다(matchPattern·와일드카드 금지): #{seed_hosts.inspect}" unless
+  seed_hosts.all? { |entry| entry.keys == ["matchName"] && !entry["matchName"].to_s.include?("*") && !entry["matchName"].to_s.empty? }
+raise "[안전] allow-model-seed-fqdn의 호스트는 관측한 세 개여야 한다(실제: #{seed_hosts.map { |e| e['matchName'] }.sort.inspect})" unless
+  seed_hosts.map { |entry| entry["matchName"] }.sort == SEED_FQDN_HOSTS
+raise "[안전] allow-model-seed-fqdn의 HTTPS 대상은 TCP 443뿐이다" unless
+  seed_fqdn_rules.first["toPorts"] == [{ "ports" => [{ "port" => "443", "protocol" => "TCP" }] }]
+seed_dns = seed_egress.select { |rule| rule.key?("toEndpoints") }
+raise "[안전] allow-model-seed-fqdn의 DNS 규칙이 정확히 하나여야 한다" unless seed_dns.length == 1
+raise "[안전] allow-model-seed-fqdn DNS는 kube-system kube-dns 53과 L7 DNS 규칙만 허용한다" unless
+  seed_dns.first["toEndpoints"] == [{ "matchLabels" => { "k8s:io.kubernetes.pod.namespace" => "kube-system", "k8s-app" => "kube-dns" } }] &&
+  seed_dns.first["toPorts"] == [{ "ports" => [{ "port" => "53", "protocol" => "ANY" }], "rules" => { "dns" => [{ "matchPattern" => "*" }] } }]
+raise "[안전] allow-model-seed-fqdn에 toFQDNs·toEndpoints 밖의 egress 대상(toCIDR·toEntities 등)이 있다" unless
+  seed_egress.all? { |rule| rule.key?("toFQDNs") || rule.key?("toEndpoints") } &&
+  seed_egress.none? { |rule| rule.keys.any? { |key| %w[toCIDR toCIDRSet toEntities toServices toGroups].include?(key) } }
 
 # --- mafest-app(API·웹·적재 Job) --------------------------------------------------
 # 순서: allow(wave 0) → default-deny(wave 1). API·적재 Job은 DNS와 정해진 대상만 나가고, 웹은 나가지 않는다.
