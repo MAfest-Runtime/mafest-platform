@@ -156,6 +156,12 @@ spec:
               value: values
             - name: MAFEST_LLM_SUGGEST
               value: "0"
+            # 질문 해석(interpretation_draft) 진행 이벤트를 스트림으로 먼저 보내는 플래그.
+            # mafest의 _flag는 값이 정확히 "1"일 때만 켜지므로 "true"가 아니라 "1"을 쓴다("true"는 조용히 꺼진 채 배포된다).
+            # 웹(mafest-web 1.6.0)과 mafest-api 이미지가 이 플래그를 아는 릴리스로 먼저 배포된 뒤에만 머지·Sync한다.
+            # 되돌리려면 이 항목을 지우거나 "0"으로 바꾼다. 웹은 draft 이벤트 없이도 동작한다.
+            - name: MAFEST_INTENT_STREAM_DRAFT
+              value: "1"
             # 세션 저장소 풀은 Pod당 최대 2 연결(첫 사용 때 연결한다). 롤링 중 연결 예산은 검사기가 계산한다.
             - name: MAFEST_SESSION_POOL_MAX
               value: "2"
