@@ -1,0 +1,52 @@
+# model cache seed Job의 외부 HTTPS egress — seed가 실제로 접속한 호스트 세 개만 연다.
+#
+# 호스트는 추측이 아니라 관측한 값이다. seed Job을 NetworkPolicy 없이 관측용 정책(같은 폴더의 model-seed-observe 파일)
+# 아래에서 3회 반복해 Hubble DNS 질의로 확정했다(2026-10-21~22).
+#   - huggingface.co          : 메타데이터·파일 목록(Hub endpoint)
+#   - cas-server.xethub.hf.co : 저장 백엔드(Xet) 접속
+#   - us.aws.cdn.hf.co        : 실제 파일을 내려주는 CDN
+# 와일드카드(matchPattern)와 0.0.0.0/0:443은 쓰지 않는다.
+#
+# **CDN 이름은 지역·시점에 따라 바뀔 수 있다.** 바뀌면 seed가 이 정책에 막혀 실패한다(기존에 받아 둔 모델을
+# 읽는 vLLM에는 영향이 없다). 그때는 관측용 정책을 다시 올려 Hubble에서 DNS 질의 이름을
+# 확인하고 여기에 matchName을 더한다(절차: bootstrap/persona-model-seed/README.md).
+#
+# 모양은 persona-edge/network-policy-fqdn.yaml의 allow-ddns-fqdn을 따른다. 필수 두 가지:
+#   - toEndpoints 안에서는 `k8s:io.kubernetes.pod.namespace` 접두어를 쓴다(endpointSelector는 안 씀)
+#   - L7 DNS 규칙 블록이 있어야 Cilium이 DNS 응답을 스누핑해 FQDN→IP 캐시를 만든다. allow-model-seed-dns의
+#     표준 DNS 허용만으로는 toFQDNs가 동작하지 않는다. 이 DNS 규칙은 이름 **질의**만 허용하며 HTTPS 접속은
+#     위 toFQDNs 세 개로만 열린다.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-model-seed-fqdn
+  labels:
+    app.kubernetes.io/part-of: persona-platform
+    app.kubernetes.io/component: networkpolicy
+  annotations:
+    # 이 namespace는 allow=0 / default-deny=1 규약을 쓴다.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: persona-vllm-model-seed
+  egress:
+    - toFQDNs:
+        - matchName: huggingface.co
+        - matchName: cas-server.xethub.hf.co
+        - matchName: us.aws.cdn.hf.co
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"

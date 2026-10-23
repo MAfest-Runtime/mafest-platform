@@ -1,0 +1,52 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# BF16 비교·되돌리기용: 운영이 FP8-B + CPU n-gram으로 바뀌기 전의 설정(BF16 체크포인트 + FLASHINFER,
+# 추측 디코딩 없음)과 같다. 성능을 다시 비교하거나 FP8-B에 문제가 생겼을 때 되돌리는 데 쓴다.
+# BF16 모델 cache는 PVC에 그대로 있다(지우지 않는다).
+#
+# **운영 기본값이 아니다.** prod overlay는 FP8-B 기준이다.
+#
+# 바꾸는 것(세 곳이 같은 모델·revision을 가리켜야 한다)
+# 1. vllm 명령의 모델 경로
+# 2. init container가 보는 디렉터리(dir=)와 마커 revision, 필수 파일(weight index가 있는 분할 체크포인트)
+# 3. args에서 --speculative-config와 그 값 두 줄 제거
+# 이 patch는 base의 위치(index)에 기대므로 base의 command·args 순서를 바꾸면 렌더가 깨지거나 엉뚱한
+# 곳을 지운다. 검사(ops-lab validate-model-experiments.sh)가 렌더 결과를 단정한다.
+#
+# 적용:      kubectl --context <context> diff -k kustomize/overlays/exp/persona-vllm-bf16
+#            kubectl --context <context> apply -k kustomize/overlays/exp/persona-vllm-bf16
+# 운영으로 복귀: kubectl --context <context> apply -k kustomize/overlays/prod/persona-vllm
+#
+# **이 overlay를 가리키는 Argo Application이 없다.**
+namespace: persona-inference
+resources:
+  - ../../prod/persona-vllm
+patches:
+  - target:
+      kind: Deployment
+      name: persona-vllm
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/command/2
+        value: /models/Qwen/Qwen3-4B-Instruct-2507/cdbee75f17c01a7cc42f958dc650907174af0554
+      - op: replace
+        path: /spec/template/spec/initContainers/0/command/2
+        value: |
+          set -eu
+          dir=/models/Qwen/Qwen3-4B-Instruct-2507/cdbee75f17c01a7cc42f958dc650907174af0554
+          for name in .persona-seed-complete.json .persona-seed-manifest.json model.safetensors.index.json; do
+            if [ ! -s "$dir/$name" ]; then
+              echo "model cache not ready: missing $name" >&2
+              exit 1
+            fi
+          done
+          if ! grep -q '"revision": "cdbee75f17c01a7cc42f958dc650907174af0554"' "$dir/.persona-seed-complete.json"; then
+            echo "model cache marker revision mismatch" >&2
+            exit 1
+          fi
+          echo "model cache verified"
+      # --speculative-config(인덱스 8)와 값(인덱스 9). 같은 위치를 두 번 지운다.
+      - op: remove
+        path: /spec/template/spec/containers/0/args/8
+      - op: remove
+        path: /spec/template/spec/containers/0/args/8

@@ -1,6 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# FP8-B 실험용 모델 seed: Qwen/Qwen3-4B-Instruct-2507-FP8 @ 8591804를 기존 모델 cache PVC에 받는다.
+# FP8-B(운영 vLLM이 읽는 체크포인트) 모델 seed: Qwen/Qwen3-4B-Instruct-2507-FP8 @ 8591804를 기존 모델 cache PVC에 받는다.
 #
 # 모델별 seed overlay의 기준 모양이다. 다른 모델(예: INT4 AWQ)은 이 디렉터리를 복사해 아래
 # 이름·MODEL_ID·MODEL_REVISION·label만 바꾸면 된다.

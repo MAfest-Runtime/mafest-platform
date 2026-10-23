@@ -129,7 +129,7 @@ vLLM은 추론 API와 `/metrics`를 같은 TCP 8000에서 내므로, Prometheus 
 | `kustomize/base/networkpolicy/persona-inference/network-policy.yaml` | 작성. 정책 5개. 수동 적용 순서용 `persona.runtime/apply-phase` label(allow·deny) |
 | `kustomize/overlays/prod/persona-inference-netpol/` | 작성. **Argo Application 없음** — 사람이 `kubectl apply -k`로 적용. Namespace는 만들지 않는다(model-cache overlay 소유) |
 | `kustomize/base/networkpolicy/persona-app/network-policy.yaml` | `allow-gateway` egress에 vLLM TCP 8000 추가(2026-09-27). `persona-app-netpol` Argo Application 소유 |
-| `kustomize/base/networkpolicy/persona-inference/network-policy-fqdn.yaml.draft` | 배선하지 않음 — 확장자와 `resources` 둘 다에서 제외 |
+| `kustomize/base/networkpolicy/persona-inference/network-policy-fqdn.yaml` | seed Job 전용 FQDN 허용(관측한 호스트 3개). 관측용 `allow-model-seed-observe.yaml`은 배선하지 않는다 |
 
 `scripts/validate-networkpolicy-manifests.sh`가 렌더와 정책 모양을 검사하고,
 `scripts/test-networkpolicy-manifests.sh`가 잘못된 변경(namespace만 허용, selector를 별도 peer로
