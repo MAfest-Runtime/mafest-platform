@@ -17,7 +17,7 @@ MAfest Runtime의 Kubernetes, 네트워크, 스토리지, 배포 선언과 운�
 | 네트워크 | Cilium VXLAN과 kube-proxy. 홈과 AWS 노드 사이는 Tailscale |
 | 진입 | 사용자 → MetalLB VIP(HTTPS) → Traefik → mafest-web, mafest-api |
 | 앱 | mafest-web과 mafest-api 각 2 replica. 공개 API 계약 1.6.0. 운영 설정은 [`api-deployment.yaml`](kustomize/base/mafest-app/api-deployment.yaml) |
-| DB | PostgreSQL과 Apache AGE를 CNPG가 관리한다. Worker1이 Primary, Worker2가 Replica. 접속은 `mafest-db-rw` Service |
+| DB | PostgreSQL과 Apache AGE를 CNPG가 관리한다. 인스턴스는 worker1·worker2에 1개씩, Primary는 장애 시 바뀌며 `mafest-db-rw`가 현재 Primary를 가리킨다 |
 | 추론 | namespace `persona-inference`의 vLLM. 모델은 Qwen3-4B-Instruct-2507 공식 FP8 체크포인트, vLLM 0.29, CPU n-gram speculative decoding. 컴파일 캐시는 PVC |
 | 관측 | Prometheus와 Grafana. 대시보드 JSON은 별도 저장소에서 생성한다 |
 | GitOps | Argo CD. 수동 Sync만 쓴다 |
@@ -28,7 +28,7 @@ MAfest Runtime의 Kubernetes, 네트워크, 스토리지, 배포 선언과 운�
 | --- | --- |
 | `ansible/` | GPU 노드와 mem-lab 워커 호스트 설정 playbook |
 | `argocd/`, `bootstrap/` | Argo Application 선언, Argo 밖에서 설치하는 Cilium, CNPG Operator, CoreDNS, local-path, Traefik, namespace, 모델 seed |
-| `db/`, `helm/`, `deploy/` | DB 역할·권한 SQL, Helm values, 승인 Sync 기록 |
+| `db/`, `helm/`, `deploy/` | DB 역할·권한 SQL, Helm values, 승인 Sync 기록, 멀티턴 배포 초안(`deploy/mafest-multiturn/drafts/`, 비활성) |
 | `kustomize/base/` | 리소스 정의 |
 | `kustomize/overlays/{prod,exp}/` | 운영 Application과 수동 적용 대상, 실험 overlay(`persona-vllm-bf16`은 롤백용) |
 | `scripts/` | 렌더·정책 검증과 Sync 사전 점검 |
