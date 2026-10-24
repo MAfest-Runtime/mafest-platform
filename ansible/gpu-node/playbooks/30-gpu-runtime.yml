@@ -5,7 +5,7 @@
 # version은 이 host에서 `apt-cache madison nvidia-driver-580-server`가 보여 준 값만 받는다.
 # R570(`nvidia-driver-570-server`·`cuda-drivers-570`) 전환 경로는 폐기했다 — Ubuntu 24.04의
 # 570-server는 580-server로 이어지는 전환 package이고, 폐기 근거는
-# terraform/envs/prod/vllm-node-join-plan.md §4 "폐기된 선택: R570"에 있다.
+# 삭제한 GPU 노드 Join 계획 문서(Git 이력)의 "폐기된 선택: R570"에 있다.
 #
 # 설치 여부는 controller의 판정 스크립트(files/nvidia_driver_gate.py, 테스트 있음)가 host 출력으로
 # 정한다. R580이 이미 정상(요청 version + 적재 + 실행 중 kernel용 DKMS)이면 driver를 재설치하거나
@@ -43,7 +43,7 @@
           - nvidia_driver_branch is not defined or (nvidia_driver_branch | string) == '580'
         fail_msg: >-
           nvidia_driver_branch={{ nvidia_driver_branch | default('') }}는 받지 않는다. GPU host 기준선은
-          R580({{ gpu_driver_package }})이고 R570 전환 경로는 폐기했다(vllm-node-join-plan.md §4).
+          R580({{ gpu_driver_package }})이고 R570 전환 경로는 폐기했다.
 
     # --- 현재 driver 상태 읽기(전부 읽기라 check mode에서도 돈다) ---------------------------
     - name: 설치된 NVIDIA driver package 읽기

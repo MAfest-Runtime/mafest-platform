@@ -1,7 +1,0 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: persona-mock-sse
-resources:
-  - ../../../base/mock-sse
-  - gateway.yaml
-  - httproute.yaml

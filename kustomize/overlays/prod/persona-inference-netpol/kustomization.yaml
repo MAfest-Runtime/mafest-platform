@@ -6,8 +6,7 @@ kind: Kustomization
 #
 # **이 overlay를 가리키는 Argo Application이 없다.** 사람이 control-plane에서
 # `kubectl apply -k`로 적용한다. kubectl은 sync-wave를 읽지 않으므로 base의
-# `persona.runtime/apply-phase` label로 allow → deny 순서를 나눠 적용한다(절차:
-# terraform/envs/prod/vllm-network-model-bootstrap-plan.md의 "첫 적용·복구 절차").
+# `persona.runtime/apply-phase` label로 allow → deny 순서를 나눠 적용한다.
 namespace: persona-inference
 resources:
   - ../../../base/networkpolicy/persona-inference

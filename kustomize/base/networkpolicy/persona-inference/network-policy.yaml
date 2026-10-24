@@ -1,6 +1,5 @@
 # persona-inference NetworkPolicy. 이 base를 가리키는 Argo Application이 없다 — 사람이
-# control-plane에서 `kubectl apply -k`로 적용한다(절차: terraform/envs/prod/
-# vllm-network-model-bootstrap-plan.md의 "첫 적용·복구 절차").
+# control-plane에서 `kubectl apply -k`로 적용한다(allow 먼저, default-deny 마지막).
 #
 # 선택 기준은 namespace label + Pod label뿐이다. IP·Pod 이름을 정책 기준으로 쓰지 않는다 —
 # Pod IP는 재시작마다 바뀌고 이름은 ReplicaSet 해시를 포함해 배포마다 달라진다.
