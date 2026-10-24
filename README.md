@@ -7,7 +7,6 @@ MAfest Runtime의 Kubernetes, 네트워크, 스토리지, 배포 선언과 운�
 
 ![MAfest Runtime 구성도 — 홈 Kubernetes와 AWS GPU vLLM 연결](assets/architecture-mafest-runtime.png)
 
-편집 원본은 [`assets/architecture-mafest-runtime.drawio`](assets/architecture-mafest-runtime.drawio)다.
 
 ## 구성 요소
 
