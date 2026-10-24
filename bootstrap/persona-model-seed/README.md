@@ -133,8 +133,7 @@ kubectl --context $CTX -n persona-inference logs deploy/persona-vllm -c vllm | g
 ```
 
 - 품질 평가·탐침·재전송은 ops-lab `experiments/LLM-02-baseline/README.md` 절차를 따른다.
-- 실험 overlay: `kustomize/overlays/exp/persona-vllm-bf16`(BF16 비교·되돌리기),
-  `kustomize/overlays/exp/persona-vllm-kv-fp8`(KV cache FP8, 현재 prod 위에서는 측정한 적 없는 조합).
+- 실험 overlay: `kustomize/overlays/exp/persona-vllm-bf16`(BF16 비교·되돌리기).
 
 ## 8) 되돌리기
 

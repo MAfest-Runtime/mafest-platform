@@ -82,8 +82,7 @@ spec:
         - protocol: TCP
           port: 9100
 ---
-# 아웃바운드: 백엔드로 프록시할 세 네임스페이스(persona-app·persona-edge·mafest-app. persona-mock-sse는 실험 자원을
-# 정리해 2026-10-07 뺐다. mafest-app은 M6에서 API·웹 Service로 가는 길이다)(포트를 좁히지 않는다 — Traefik이 프록시하는
+# 아웃바운드: 백엔드로 프록시할 세 네임스페이스(persona-app·persona-edge·mafest-app. mafest-app은 M6에서 API·웹 Service로 가는 길이다)(포트를 좁히지 않는다 — Traefik이 프록시하는
 # 백엔드 포트가 HTTPRoute·Middleware 변경마다 늘어날 수 있어, 대상 네임스페이스 단위로
 # 허용하고 실제 도달 가능한 포트는 각 백엔드 네임스페이스의 ingress 규칙이 이미 좁혀
 # 놓았다 — 예: persona-web은 8080만 ingress를 받으므로 Traefik이 다른 포트로 실제로

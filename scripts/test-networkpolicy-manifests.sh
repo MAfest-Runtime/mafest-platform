@@ -49,8 +49,8 @@ cases = [
    "복제 ingress 포트는 5432(WAL)·8000"],
   [MFD, "mafest-default-deny", ->(p) { p.dig("metadata", "annotations")["argocd.argoproj.io/sync-wave"] = "0" },
    "mafest-default-deny: sync-wave가 1"],
-  # traefik — 정리한 persona-mock-sse로 다시 나가지 않는다
-  [TRAEFIK, "allow-egress-backends", ->(p) { p.dig("spec", "egress", 0, "to") << ns_peer("persona-mock-sse") },
+  # traefik — 허용 목록 밖 네임스페이스로 나가지 않는다
+  [TRAEFIK, "allow-egress-backends", ->(p) { p.dig("spec", "egress", 0, "to") << ns_peer("unlisted-ns") },
    "traefik egress 대상이 다르다"],
   # 준비 중 페이지(persona-app) — traefik 8080만 들어오고, 나가는 길은 없다
   [MNT, "maintenance-allow-traefik", ->(p) { p.dig("spec", "ingress", 0)["from"] = [ns_peer("monitoring")] },

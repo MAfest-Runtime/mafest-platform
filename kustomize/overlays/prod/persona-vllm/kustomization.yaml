@@ -4,7 +4,7 @@ kind: Kustomization
 # 전제다(kustomize/overlays/prod/persona-model-cache).
 #
 # **이 overlay를 가리키는 Argo Application이 없다.** 첫 기동은 사람이 control-plane에서 적용하고
-# 확인한다. ops-lab의 repos/persona-platform/tools/validate-vllm-manifests.sh가 Argo 선언의 이 경로 참조를 막는다.
+# 확인한다. ops-lab의 repos/mafest-platform/tools/validate-vllm-manifests.sh가 Argo 선언의 이 경로 참조를 막는다.
 namespace: persona-inference
 resources:
   - ../../../base/persona-vllm
