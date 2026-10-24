@@ -4,7 +4,7 @@
 > `ap-northeast-2a` GPU 인스턴스와 EIP가 등록돼 있다. 이후 실제 AWS refresh plan에서도
 > 변경 없음을 확인했다. 아래 2026-09-19·09-25의 "생성 전" 문구와 준비 상태표는 당시 기록이며
 > 현재 미배포를 뜻하지 않는다. 새 site-to-site 라우터의 코드·검증·적용 경계는
-> [AWS 라우터 단계 계획](site-to-site-router-plan.md)을 따른다. 2026-10-01 라우터 EC2와
+> AWS 라우터 단계 계획(Git 이력)을 따른다. 2026-10-01 라우터 EC2와
 > 전용 서브넷·보안 그룹을 생성했다. 두 전용 라우터의 Tailscale 시험망은 양방향
 > ICMP 각 100/100을 확인했지만 기존 GPU·Kubernetes 경로 전환은 수행하지 않았다.
 > 코드의 기본값은 `router_enabled=false`다. 현재 환경의 비공개 `terraform.tfvars`에는
@@ -83,10 +83,10 @@ Tailscale 설치·ACL·호스트 방화벽·실제 관리 접속을 확인한 �
 Tailscale 앱 접근 통제는 SG가 아닌 tailnet 정책·호스트/CNI 정책도 필요하다.
 
 확정 사양, 단계별 중단 조건, `kubeadm join`과 원복 경계는
-[vLLM 노드 사양·Join 계획](vllm-node-join-plan.md)에 둔다. 이 Terraform은 호스트까지만
+vLLM 노드 사양·Join 계획(Git 이력)에 있다. 이 Terraform은 호스트까지만
 만들며 Join token·Tailscale auth key·모델 토큰을 `user_data`나 state에 넣지 않는다.
 GPU smoke 뒤의 Prometheus Target, DCGM, vLLM, Gateway 지표와 합성 부하·장애 실험의
-순서는 [vLLM 관측·실험 계획](vllm-observability-experiment-plan.md)에 둔다. 문서가 있어도
+순서는 vLLM 관측·실험 계획(Git 이력)에 있다. 문서가 있어도
 AWS 생성·Kubernetes Join·관측 리소스 Sync가 실행된 것은 아니다.
 
 ## 생성 전에 반드시 확인
@@ -161,7 +161,7 @@ API 주소·인증서 SAN·노드/터널 주소·반환 경로·MTU를 확인한
 8192는 이 기준선이 통과한 뒤 별도로 비교한다. 둘을 한 실행의 자동 가변 상한으로 섞지 않는다.
 첫 실행 후보는 vLLM `v0.29.0-cu129-ubuntu2404`(linux/amd64 digest `sha256:51b10427…51b8`)·
 CUDA 12.9.1·NVIDIA driver **R580**(Ubuntu `nvidia-driver-580-server`, 정확한 patch 고정)·Container
-Toolkit 1.20.x다. R580 근거와 폐기된 선택(R570)은 [Join 계획 §4](vllm-node-join-plan.md)에 있다.
+Toolkit 1.20.x다. R580 근거와 폐기된 선택(R570)은 Join 계획(Git 이력) §4에 있다.
 모델 commit과 vLLM 이미지 digest, driver/toolkit patch는 실제 배포 전에 다시 확인한다. 한국어 품질·처리량·VRAM은 미측정이다.
 
 ## 준비 상태표 (2026-09-27)
@@ -183,9 +183,8 @@ Toolkit 1.20.x다. R580 근거와 폐기된 선택(R570)은 [Join 계획 §4](vl
 | local-path GPU 노드 | **완료** — `persona-gpu-01` nodePathMap 반영, GPU 노드 고정 PVC `Bound`, 쓰기/읽기, Retain 정리 확인 | — |
 | 40Gi 모델 cache PVC·seed Job | **완료(운영자 보고, 2026-09-27)** — 첫 seed 완료. 완료 marker·manifest 관측 기록은 이 문서에 없다 | PVC·Job을 바꾸거나 다시 실행하지 않는다 |
 | 다운로드 FQDN 관측·Cilium FQDN allowlist | **미완료 — 이번 범위 밖** | inference 정책(특히 `allow-model-seed-dns`) 적용 뒤 seed를 다시 실행해야 할 때 먼저 만든다 |
-| `persona-inference` NetworkPolicy 적용 | **미완료** — 첫 적용 가능한 선언 완성(2026-09-27). Argo Application 없음, 사람이 `kubectl apply` | [vLLM 네트워크 계획](vllm-network-model-bootstrap-plan.md)의 "첫 적용·복구 절차"(allow 먼저, default-deny 마지막) 뒤 실측 a–d |
+| `persona-inference` NetworkPolicy 적용 | **미완료** — 첫 적용 가능한 선언 완성(2026-09-27). Argo Application 없음, 사람이 `kubectl apply` | allow 먼저, default-deny 마지막으로 적용 뒤 실측 a–d |
 | vLLM Deployment | **완료(운영자 제공, 2026-09-27)** — non-root·read-only 기동, 비스트리밍 추론, control-plane → Service 경유 SSE `[DONE]`, Prometheus Target `UP` | 성능·과부하 실험은 미확인 |
-| Gateway LLM mode 전환 | **미완료** — llm 모드와 예산 수정 Gateway 이미지(`16caa0c`, `sha256:0ac1ac2a…89ef`) 선언 완료, 클러스터 미적용 | Argo `persona-app` 수동 Sync → SVC-01 외부 요청 1건 → 순차 측정([vLLM 네트워크 계획](vllm-network-model-bootstrap-plan.md)의 "Gateway LLM 전환") |
 
 ### 준비 완료·초안 — 선언이나 문서가 있는 것 (동작 확인 아님)
 
@@ -196,7 +195,7 @@ Toolkit 1.20.x다. R580 근거와 폐기된 선택(R570)은 [Join 계획 §4](vl
 | GPU 노출 방식 | **확정(2026-09-25)·적용 완료** — NVIDIA device plugin(노드 1대 전제), `nvidia.com/gpu: 1` 확인 | — |
 | Ansible playbook 5계층 | **준비 완료(2026-09-25)** — 작성했으나 **한 번도 실행하지 않았다.** `ansible` 미설치로 syntax-check·lint 미실행 | ansible 설치 환경에서 `--syntax-check`·`ansible-lint` 먼저 통과 |
 | tailnet subnet router | `k8s-cp`. 2026-09-19 결정은 SNAT off였지만 **현재 운영 상태는 SNAT on**이다. 검증 행렬 7행 | SNAT 설정을 바꿀 때 행렬을 다시 실행 |
-| `persona-inference` NetworkPolicy·Gateway → vLLM egress | **첫 적용 가능한 선언(2026-09-27)** — Gateway egress는 `persona-inference` ns AND vLLM Pod TCP 8000, metrics는 `monitoring` ns AND Prometheus Pod. 적용 묶음 구분용 `apply-phase` label. validator·음성 테스트 통과, **클러스터 미적용** | inference는 수동 apply(Argo Application 추가 안 함), Gateway egress는 `persona-app-netpol` Argo Sync |
+| `persona-inference` NetworkPolicy·API → vLLM ingress | **선언 있음(2026-09-27 작성)** — API(`mafest-app`의 `mafest-api`)에서 vLLM Pod TCP 8000만 허용하고, metrics는 `monitoring` ns AND Prometheus Pod만 허용한다. 적용 묶음 구분용 `apply-phase` label. validator·음성 테스트 통과 | inference는 수동 apply(Argo Application 추가 안 함), API egress는 `mafest-app-netpol` Argo Sync |
 | model cache PVC·seed Job | **첫 seed 완료(운영자 보고, 2026-09-27)** — `kustomize/overlays/prod/persona-model-cache`(Namespace·40Gi PVC·seed Job). vLLM image로 `snapshot_download` 후 upstream metadata(파일 목록·크기·sha256·git blob sha1) 대조. **Argo Application 없음** | 바꾸거나 다시 실행하지 않는다 |
 | model 다운로드 FQDN 정책 | **열림 — 이번 범위 밖** — 실제 호스트 관측 기록이 없고 placeholder가 들어 있어 배선하지 않았다 | seed 재실행이 필요할 때 호스트 관측 후 allowlist 확정(`allow-model-seed-dns`만 적용돼도 이것 없이 seed가 외부에 닿지 못한다) |
 | 0002·0003 복원 재검증 절차 | **준비 완료(2026-09-25)** — `runbooks/material-chunks-restore-verify.md`. 실행하지 않았다 | 사용자가 CP에서 dump·격리 복원 1회 실행 |
@@ -218,9 +217,7 @@ Toolkit 1.20.x다. R580 근거와 폐기된 선택(R570)은 [Join 계획 §4](vl
 | 11 | local-path nodePathMap 반영 | GPU 노드에 고정한 PVC `Bound`, 쓰기/읽기, Retain 정리 | 완료 |
 | 12 | 40Gi 모델 cache PVC·seed Job 1회(inference NetworkPolicy보다 먼저) | Job `Complete` + 완료 marker·manifest, 다운로드 호스트 관측 기록. 실패면 vLLM 시작하지 않음 | 완료(운영자 보고, 기록 미첨부) |
 | 13 | `persona-inference` 정책 수동 적용(적용 전 목록 보관 → allow 4개 → 확인 → default-deny → 재확인). FQDN allowlist는 범위 밖 | 단계마다 실측 a–d: Gateway→vLLM 허용, Prometheus Target `UP`, 일반 Pod→vLLM 차단, 추론 정상. 실패하면 default-deny로 진행하지 않음 | 미완료 |
-| 14 | `persona-app-netpol` Argo Sync(Gateway → vLLM egress) | 기존 DB·embedding·DNS 경로 무변경 확인 | 미완료 |
 | 15 | vLLM Deployment 적용 | ClusterIP 내부에서 `/health`와 최소 생성 요청 | 완료(운영자 제공: 비스트리밍 추론, Service 경유 SSE `[DONE]`) |
-| 16 | Gateway LLM mode 전환 | NetworkPolicy 적용 뒤 vLLM Target `UP` 유지, Gateway LLM mode 요청 성공 | 미완료(vLLM Target `UP`은 정책 적용 전 운영자 제공으로 확인) |
 
 ## 근거
 

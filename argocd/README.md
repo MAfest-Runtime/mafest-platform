@@ -38,7 +38,6 @@ Argo Application이 없는 이유까지 같이 적는다 — "왜 여기 없는�
 | --- | --- | --- |
 | `kustomize/overlays/prod/traefik-networkpolicy` | `kubectl apply -k`(CP 수동) | Traefik 본체가 `helm --create-namespace`로 Argo 밖에 설치돼 있어(`bootstrap/traefik/`), 그 NetworkPolicy도 같은 방식으로 다룬다 |
 | `kustomize/overlays/prod/traefik-observability` | `kubectl apply -k`(CP 수동) | 위와 같은 이유(Traefik 부속) |
-| `kustomize/overlays/prod/mock-sse` | 없음(2026-09-16 de-registered) | 완료된 실험 자원 정리 — 재등록 절차는 `runbooks/test-resource-cleanup.md`(로컬) |
 | `kustomize/overlays/prod/mafest-load` | `kubectl apply -k`(CP 수동, runbook 단계마다 한 Job) | 일회성 적재(stage → graph)라 상시 Sync 대상에 두지 않는다. 평상시 `resources: []` |
 
 ## dcgm-exporter 수집 지표와 5초 간격 (B0 GPU 계측)
@@ -76,16 +75,6 @@ L4에서는 profiling 지표 일부를 동시에 못 모으는 경우가 있다.
 ```bash
 kubectl --context <context> -n monitoring logs $POD | grep -iE "warn|error|not supported|field"
 ```
-
-## 폐기한 Application (2026-10-07)
-
-`persona-app`·`persona-app-ingress`·`persona-app-netpol`·`persona-db`·`persona-db-netpol`·
-`csi-driver-nfs`·`persona-nfs-storage`와 de-registered였던 `persona-migrate` overlay를 Git에서 뺐다
-(브랜치 `chore/retire-persona`). 모두 수동 Sync·prune 없음이라 **Git에서 빠져도 클러스터 리소스는
-남는다**. 실제 삭제는 사람이 삭제 runbook 순서(공개 Route → 앱 → DB → PVC/PV → 노드 디렉터리 →
-NetworkPolicy·NFS → Application)로 실행하고, 그 뒤 이 변경을 머지한다.
-남긴 것: `public-gateway`(Gateway·TLS), `persona-edge`, vLLM·모델 캐시·inference NetworkPolicy(Argo 밖),
-Traefik, 공용 Application.
 
 ## 신규 Application 추가 시
 
